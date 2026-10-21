@@ -1,223 +1,339 @@
 const express = require('express');
-const store = require('../dataStore');
-const { syncEntityToMongo } = require('../config/db');
+const { v4: uuidv4 } = require('uuid');
+const { supabaseAdmin } = require('../config/supabaseClient');
+const { recordAuditLog } = require('../utils/auditLogger');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
-  const result = store.projects.map(p => {
-    const meth = store.methodologies.find(m => m.id === p.methodologyId);
-    const phases = store.phases.filter(ph => ph.projectId === p.id);
-    const members = store.projectMembers.filter(pm => pm.projectId === p.id).map(pm => ({
-      ...pm,
-      user: store.users.find(u => u.id === pm.userId)
-    }));
-    const artifacts = store.artifacts.filter(a => a.projectId === p.id);
-    return { ...p, methodology: meth, phases, members, artifacts };
-  });
-  return res.json(result);
+// 1. GET /api/projects - List all projects
+router.get('/', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let query = supabaseAdmin.from('projects').select('*');
+    if (status && status !== 'All') {
+      query = query.eq('status', status);
+    }
+
+    const { data: projects, error } = await query.order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { data: methodologies } = await supabaseAdmin.from('methodologies').select('id, name, code');
+    const { data: allPhases } = await supabaseAdmin.from('phases').select('id, project_id, status, progress');
+    const { data: allArtifacts } = await supabaseAdmin.from('artifacts').select('id, project_id, status');
+
+    const result = (projects || []).map(p => {
+      const meth = (methodologies || []).find(m => m.id === p.methodology_id);
+      const phases = (allPhases || []).filter(ph => ph.project_id === p.id);
+      const artifacts = (allArtifacts || []).filter(a => a.project_id === p.id);
+
+      const completedPhases = phases.filter(ph => ph.status === 'Completed').length;
+      const progress = phases.length > 0 ? Math.round((completedPhases / phases.length) * 100) : 0;
+
+      return {
+        id: p.id,
+        name: p.name,
+        code: p.code,
+        description: p.description,
+        clientName: p.client_name,
+        startDate: p.start_date,
+        endDate: p.end_date,
+        type: p.type,
+        priority: p.priority || 'Medium',
+        status: p.status || 'Active',
+        currentPhaseId: p.current_phase_id,
+        methodology: meth ? { id: meth.id, name: meth.name } : { name: 'Waterfall (7-Phase SDLC)' },
+        progress,
+        phasesCount: phases.length,
+        artifactsCount: artifacts.length,
+        publishedCount: artifacts.filter(a => a.status === 'Published').length,
+        createdAt: p.created_at
+      };
+    });
+
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-router.get('/:id', (req, res) => {
-  const project = store.projects.find(p => p.id === req.params.id);
-  if (!project) return res.status(404).json({ error: 'Project not found' });
+// 2. GET /api/projects/:id - Full project details
+router.get('/:id', async (req, res) => {
+  try {
+    const { data: project, error } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
 
-  const methodology = store.methodologies.find(m => m.id === project.methodologyId);
+    if (error || !project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
-  // Auto-reconcile and ensure all phase deliverables exist for this project
-  if (methodology && methodology.requiredArtifacts) {
-    const projectPhases = store.phases.filter(ph => ph.projectId === project.id);
-    methodology.requiredArtifacts.forEach((def, idx) => {
-      const targetPhase = projectPhases.find(p => p.name.toLowerCase() === def.phaseName.toLowerCase()) || projectPhases[0];
-      if (!targetPhase) return;
+    const { data: phases } = await supabaseAdmin
+      .from('phases')
+      .select('*')
+      .eq('project_id', project.id)
+      .order('sequence', { ascending: true });
 
-      const existing = store.artifacts.find(
-        a => a.projectId === project.id && (a.title.toLowerCase() === def.name.toLowerCase() || a.artifactType.toLowerCase() === def.artifactType.toLowerCase())
-      );
+    const { data: artifacts } = await supabaseAdmin
+      .from('artifacts')
+      .select('*')
+      .eq('project_id', project.id);
 
-      if (!existing) {
-        const ownerUser = store.users.find(u => u.role === def.ownerRole) || store.users[0];
-        const artifactId = `art-${project.id}-${idx + 1}-${Date.now().toString().slice(-4)}`;
-        const newArt = {
-          id: artifactId,
-          projectId: project.id,
-          phaseId: targetPhase.id,
-          artifactType: def.artifactType,
-          title: def.name,
-          description: `${targetPhase.name} Phase Deliverable`,
-          ownerId: ownerUser ? ownerUser.id : 'usr-pm-01',
-          status: 'Draft',
-          currentVersion: '1.0',
-          origin: 'Methodology Framework',
-          blocksNextPhase: def.blocksPhase ?? true,
-          content: ''
-        };
-        store.artifacts.push(newArt);
-        syncEntityToMongo('artifacts', newArt);
-      }
+    const { data: members } = await supabaseAdmin
+      .from('project_members')
+      .select('*')
+      .eq('project_id', project.id);
+
+    const { data: users } = await supabaseAdmin.from('users').select('id, name, email, role, avatar');
+    const { data: meth } = await supabaseAdmin.from('methodologies').select('*').eq('id', project.methodology_id).single();
+
+    const enrichedArtifacts = (artifacts || []).map(a => {
+      const owner = (users || []).find(u => u.id === a.owner_id);
+      return {
+        id: a.id,
+        projectId: a.project_id,
+        phaseId: a.phase_id,
+        artifactType: a.artifact_type,
+        title: a.title,
+        description: a.description,
+        currentVersion: a.current_version,
+        status: a.status,
+        blocksNextPhase: a.blocks_next_phase,
+        owner: owner ? { id: owner.id, name: owner.name, role: owner.role, avatar: owner.avatar } : { name: 'Author' },
+        createdAt: a.created_at
+      };
     });
+
+    const enrichedMembers = (members || []).map(m => {
+      const u = (users || []).find(user => user.id === m.user_id);
+      return {
+        id: m.id,
+        projectId: m.project_id,
+        userId: m.user_id,
+        roleName: m.role_name,
+        user: u ? { name: u.name, email: u.email, role: u.role, avatar: u.avatar } : null
+      };
+    });
+
+    return res.json({
+      id: project.id,
+      name: project.name,
+      code: project.code,
+      description: project.description,
+      clientName: project.client_name,
+      startDate: project.start_date,
+      endDate: project.end_date,
+      type: project.type,
+      priority: project.priority,
+      status: project.status,
+      currentPhaseId: project.current_phase_id,
+      methodology: meth || { id: 'meth-waterfall', name: 'Waterfall (7-Phase SDLC)' },
+      phases: phases || [],
+      artifacts: enrichedArtifacts,
+      members: enrichedMembers
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  const phases = store.phases.filter(ph => ph.projectId === project.id).map(ph => ({
-    ...ph,
-    artifacts: store.artifacts.filter(a => a.phaseId === ph.id)
-  }));
-  const members = store.projectMembers.filter(pm => pm.projectId === project.id).map(pm => ({
-    ...pm,
-    user: store.users.find(u => u.id === pm.userId)
-  }));
-  const artifacts = store.artifacts.filter(a => a.projectId === project.id).map(a => ({
-    ...a,
-    owner: store.users.find(u => u.id === a.ownerId),
-    reviewers: store.reviewers.filter(r => r.artifactId === a.id).map(r => ({ ...r, user: store.users.find(u => u.id === r.userId) })),
-    approvers: store.approvers.filter(app => app.artifactId === a.id).map(app => ({ ...app, user: store.users.find(u => u.id === app.userId) })),
-    versions: store.versions.filter(v => v.artifactId === a.id)
-  }));
-  const meetings = store.meetings.filter(m => m.projectId === project.id);
-  const decisions = store.decisions.filter(d => d.projectId === project.id);
-
-  return res.json({
-    ...project,
-    methodology,
-    phases,
-    members,
-    artifacts,
-    meetings,
-    decisions
-  });
 });
 
-// Guided Project Creation Wizard API
-router.post('/wizard', (req, res) => {
-  if (req.user && req.user.role !== 'Project Manager') {
-    return res.status(403).json({ error: 'Access Denied: Only Project Managers are authorized to create new SDLC projects.' });
-  }
+// 3. POST /api/projects/wizard - Create project via Guided Wizard
+router.post('/wizard', async (req, res) => {
+  try {
+    const { name, code, description, clientName, startDate, endDate, type, priority, methodologyId, members } = req.body;
 
-  const { name, code, description, clientName, startDate, endDate, type, priority, methodologyId, roleAssignments } = req.body;
-  const meth = store.methodologies.find(m => m.id === methodologyId) || store.methodologies[0];
+    if (!name || !code) {
+      return res.status(400).json({ error: 'Project name and unique code are required.' });
+    }
 
-  const projectId = `proj-${Date.now()}`;
-  const newProject = {
-    id: projectId,
-    name,
-    code: code || `PRJ-${Math.floor(Math.random()*1000)}`,
-    description,
-    clientName,
-    startDate,
-    endDate,
-    type: type || 'Web Application',
-    priority: priority || 'Medium',
-    orgId: 'org-01',
-    methodologyId: meth.id,
-    currentPhaseId: null,
-    status: 'Active',
-    createdAt: new Date()
-  };
+    const projectId = `proj-${Date.now()}`;
+    const methId = methodologyId || 'meth-waterfall';
 
-  store.projects.unshift(newProject);
+    // 1. Create project record
+    const projectRecord = {
+      id: projectId,
+      name: name.trim(),
+      code: code.trim().toUpperCase(),
+      description: description || '',
+      client_name: clientName || '',
+      start_date: startDate || new Date().toISOString().split('T')[0],
+      end_date: endDate || null,
+      type: type || 'Enterprise Web Platform',
+      priority: priority || 'Medium',
+      methodology_id: methId,
+      status: 'Active',
+      created_at: new Date().toISOString()
+    };
 
-  // Assign Members
-  const roleUserMap = {};
-  if (roleAssignments && Array.isArray(roleAssignments)) {
-    roleAssignments.forEach(ra => {
-      roleUserMap[ra.roleName] = ra.userId;
-      store.projectMembers.push({
-        id: `pm-${Date.now()}-${Math.random()}`,
-        projectId,
-        userId: ra.userId,
-        roleName: ra.roleName
-      });
-    });
-  }
+    await supabaseAdmin.from('projects').insert(projectRecord);
 
-  // Create Phases with Planned Timelines
-  const { phaseDurations = {} } = req.body;
-  const createdPhases = [];
-  meth.phases.forEach((mp, i) => {
-    const plannedDays = parseInt(phaseDurations[mp.name] || phaseDurations[i+1] || 14, 10);
-    const assignedUserId = roleUserMap[mp.ownerRole] || roleUserMap['Project Manager'] || store.users[i % store.users.length].id;
-    const assignedUser = store.users.find(u => u.id === assignedUserId);
+    // 2. Generate standard SDLC Phases based on methodology
+    const defaultWaterfallPhases = [
+      { name: 'Planning', sequence: 1, planned_days: 10 },
+      { name: 'Requirements', sequence: 2, planned_days: 14 },
+      { name: 'Design', sequence: 3, planned_days: 15 },
+      { name: 'Development', sequence: 4, planned_days: 30 },
+      { name: 'Testing', sequence: 5, planned_days: 20 },
+      { name: 'Deployment', sequence: 6, planned_days: 10 },
+      { name: 'Maintenance', sequence: 7, planned_days: 15 }
+    ];
 
-    const phase = {
-      id: `ph-${projectId}-${i+1}`,
-      projectId,
-      name: mp.name,
-      sequence: mp.sequence,
-      status: i === 0 ? 'InProgress' : 'Locked',
+    const phaseRecords = defaultWaterfallPhases.map((p, idx) => ({
+      id: `ph-${projectId}-${idx + 1}`,
+      project_id: projectId,
+      name: p.name,
+      sequence: p.sequence,
+      status: idx === 0 ? 'InProgress' : 'Locked',
       progress: 0,
-      isBlocked: i === 0,
-      plannedDays: plannedDays,
-      actualDays: i === 0 ? 1 : 0,
-      assignedRole: mp.ownerRole || assignedUser?.role || 'Phase Lead',
-      assignedUserId: assignedUserId,
-      startedAt: i === 0 ? new Date().toISOString().split('T')[0] : null,
-      completedAt: null
-    };
-    store.phases.push(phase);
-    createdPhases.push(phase);
-  });
+      is_blocked: idx > 0,
+      block_reason: idx > 0 ? `Previous phase "${defaultWaterfallPhases[idx - 1].name}" must pass gate review.` : null,
+      planned_days: p.planned_days,
+      actual_days: 0,
+      created_at: new Date().toISOString()
+    }));
 
-  newProject.currentPhaseId = createdPhases[0]?.id || null;
+    await supabaseAdmin.from('phases').insert(phaseRecords);
 
-  // Instantiate Required Artifact Definitions
-  (meth.requiredArtifacts || []).forEach((def, idx) => {
-    const targetPhase = createdPhases.find(p => p.name.toLowerCase() === def.phaseName.toLowerCase()) || createdPhases[0];
-    const ownerUserId = roleUserMap[def.ownerRole] || store.users[0].id;
+    // Set project's currentPhaseId
+    await supabaseAdmin.from('projects').update({ current_phase_id: phaseRecords[0].id }).eq('id', projectId);
 
-    const artifactId = `art-${projectId}-${idx+1}`;
-    const artifact = {
-      id: artifactId,
+    // 3. Create starter deliverable templates
+    const starterDeliverables = [
+      { phaseIdx: 0, type: 'Charter', title: 'Project Charter & Scope Definition' },
+      { phaseIdx: 0, type: 'ProjectPlan', title: 'Master Project Management Plan' },
+      { phaseIdx: 1, type: 'SRS', title: 'Software Requirements Specification (SRS)' },
+      { phaseIdx: 1, type: 'RTM', title: 'Requirement Traceability Matrix (RTM)' },
+      { phaseIdx: 2, type: 'HLD', title: 'High-Level Design (HLD) Specification' },
+      { phaseIdx: 2, type: 'LLD', title: 'Low-Level Design (LLD) & API Specs' },
+      { phaseIdx: 3, type: 'TechnicalDoc', title: 'Technical Architecture Specification' },
+      { phaseIdx: 4, type: 'TestPlan', title: 'System Quality Assurance & Test Plan' },
+      { phaseIdx: 5, type: 'DeploymentPlan', title: 'Production Deployment Runbook' }
+    ];
+
+    const userId = req.user?.id || 'usr-pm-01';
+
+    const artifactRecords = starterDeliverables.map((d, i) => ({
+      id: `art-${projectId}-${i + 1}`,
+      project_id: projectId,
+      phase_id: phaseRecords[d.phaseIdx].id,
+      artifact_type: d.type,
+      title: d.title,
+      description: `Official ${d.type} deliverable for ${name}`,
+      owner_id: userId,
+      status: 'Not Started',
+      current_version: '1.0',
+      blocks_next_phase: true,
+      content: `# ${d.title}\n\nDocument initialized for project ${name}.`,
+      created_at: new Date().toISOString()
+    }));
+
+    await supabaseAdmin.from('artifacts').insert(artifactRecords);
+
+    // 4. Assign project members
+    if (members && Array.isArray(members) && members.length > 0) {
+      const memberRecords = members.map(m => ({
+        id: uuidv4(),
+        project_id: projectId,
+        user_id: m.userId || m.id,
+        role_name: m.roleName || m.role || 'Contributor',
+        created_at: new Date().toISOString()
+      }));
+      await supabaseAdmin.from('project_members').insert(memberRecords);
+    } else {
+      // Default assign creator as PM
+      await supabaseAdmin.from('project_members').insert({
+        id: uuidv4(),
+        project_id: projectId,
+        user_id: userId,
+        role_name: 'Project Manager',
+        created_at: new Date().toISOString()
+      });
+    }
+
+    await recordAuditLog({
       projectId,
-      phaseId: targetPhase.id,
-      artifactType: def.artifactType,
-      title: def.name,
-      description: `${targetPhase.name} Phase Deliverable`,
-      ownerId: ownerUserId,
-      status: 'Draft',
-      currentVersion: '1.0',
-      origin: 'Methodology Framework',
-      blocksNextPhase: def.blocksPhase ?? true,
-      content: ''
-    };
-
-    store.artifacts.push(artifact);
-
-    // Reviewers
-    let revRoles = [];
-    try { revRoles = JSON.parse(def.reviewerRoles || '[]'); } catch(e) { revRoles = [def.reviewerRoles]; }
-    revRoles.forEach(rRole => {
-      const rUser = roleUserMap[rRole] || store.users[2].id;
-      store.reviewers.push({
-        id: `rev-${Date.now()}-${Math.random()}`,
-        artifactId,
-        userId: rUser,
-        roleName: rRole,
-        status: 'Pending'
-      });
+      entityType: 'Project',
+      entityId: projectId,
+      action: 'PROJECT_CREATED',
+      userId,
+      userName: req.user?.name || 'Project Manager',
+      userRole: 'Project Manager',
+      documentTitle: name,
+      details: `Initialized new governed SDLC project "${name}" (${code}) with 7 sequential phases.`
     });
 
-    // Approvers
-    let appRoles = [];
-    try { appRoles = JSON.parse(def.approverRoles || '[]'); } catch(e) { appRoles = [def.approverRoles]; }
-    appRoles.forEach((aRole, sIdx) => {
-      const aUser = roleUserMap[aRole] || store.users[0].id;
-      store.approvers.push({
-        id: `app-${Date.now()}-${Math.random()}`,
-        artifactId,
-        userId: aUser,
-        roleName: aRole,
-        sequence: sIdx + 1,
-        status: 'Pending'
-      });
-    });
+    return res.status(201).json({ projectId, message: 'Project initialized successfully.' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
-    syncEntityToMongo('artifacts', artifact);
-  });
+// 4. PUT /api/projects/:id - Update project metadata
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, code, description, clientName, priority, status } = req.body;
+    const updateData = {};
+    if (name) updateData.name = name.trim();
+    if (code) updateData.code = code.trim().toUpperCase();
+    if (description !== undefined) updateData.description = description;
+    if (clientName !== undefined) updateData.client_name = clientName;
+    if (priority) updateData.priority = priority;
+    if (status) updateData.status = status;
 
-  syncEntityToMongo('projects', newProject);
-  createdPhases.forEach(p => syncEntityToMongo('phases', p));
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .update(updateData)
+      .eq('id', req.params.id)
+      .select()
+      .single();
 
-  return res.json({ message: 'Project created successfully', projectId });
+    if (error || !data) return res.status(404).json({ error: 'Project not found' });
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. DELETE /api/projects/:id - Delete project
+router.delete('/:id', async (req, res) => {
+  try {
+    const { data: project } = await supabaseAdmin.from('projects').select('*').eq('id', req.params.id).single();
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    await supabaseAdmin.from('artifacts').delete().eq('project_id', req.params.id);
+    await supabaseAdmin.from('phases').delete().eq('project_id', req.params.id);
+    await supabaseAdmin.from('project_members').delete().eq('project_id', req.params.id);
+    await supabaseAdmin.from('projects').delete().eq('id', req.params.id);
+
+    return res.json({ message: `Project ${project.name} successfully deleted.` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. PUT /api/projects/phases/:phaseId - Update phase status
+router.put('/phases/:phaseId', async (req, res) => {
+  try {
+    const { status, progress, blockReason, isBlocked } = req.body;
+    const updateData = {};
+    if (status) updateData.status = status;
+    if (progress !== undefined) updateData.progress = progress;
+    if (blockReason !== undefined) updateData.block_reason = blockReason;
+    if (isBlocked !== undefined) updateData.is_blocked = isBlocked;
+
+    const { data, error } = await supabaseAdmin
+      .from('phases')
+      .update(updateData)
+      .eq('id', req.params.phaseId)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

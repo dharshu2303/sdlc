@@ -1,0 +1,612 @@
+{
+  "users": [
+    {
+      "id": "usr-admin-01",
+      "email": "admin@sdlcgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "System Administrator",
+      "role": "Admin",
+      "title": "SDLC Governance Admin",
+      "system_role": "SUPER_ADMIN",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Admin"
+    },
+    {
+      "id": "usr-pm-01",
+      "email": "john.pm@bankgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "John Smith",
+      "role": "Project Manager",
+      "title": "Senior Project Manager",
+      "system_role": "ADMIN",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=John"
+    },
+    {
+      "id": "usr-ba-01",
+      "email": "sarah.ba@bankgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "Sarah Wilson",
+      "role": "Business Analyst",
+      "title": "Lead Requirements Analyst",
+      "system_role": "MEMBER",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah"
+    },
+    {
+      "id": "usr-ta-01",
+      "email": "david.ta@bankgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "David Brown",
+      "role": "Technical Architect",
+      "title": "Chief Technical Architect",
+      "system_role": "MEMBER",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=David"
+    },
+    {
+      "id": "usr-tl-01",
+      "email": "mike.tl@bankgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "Mike Johnson",
+      "role": "Team Lead",
+      "title": "Dev Team Lead",
+      "system_role": "MEMBER",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Mike"
+    },
+    {
+      "id": "usr-dev-01",
+      "email": "alex.dev@bankgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "Alex Carter",
+      "role": "Developer",
+      "title": "Senior Software Engineer",
+      "system_role": "MEMBER",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Alex"
+    },
+    {
+      "id": "usr-qa-01",
+      "email": "robert.qa@bankgov.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "Robert Miller",
+      "role": "Tester / QA",
+      "title": "QA Lead",
+      "system_role": "MEMBER",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Robert"
+    },
+    {
+      "id": "usr-client-01",
+      "email": "client@abcbank.com",
+      "password": "$2a$10$lVn6WrwMKtu5tzC.6xuGi.V343PerH1apiMIIxtqGEwyfFKulGsBq",
+      "name": "Elena Rostova",
+      "role": "Client Representative",
+      "title": "Client Product Owner",
+      "system_role": "MEMBER",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Client"
+    }
+  ],
+  "methodologies": [
+    {
+      "id": "meth-waterfall",
+      "name": "Waterfall",
+      "code": "waterfall",
+      "description": "Structured sequential lifecycle with formal phase-gate approvals across 7 stages.",
+      "is_system": true
+    },
+    {
+      "id": "meth-scrum",
+      "name": "Scrum / Agile",
+      "code": "scrum",
+      "description": "Iterative sprint-based lifecycle with recurring documentation cycles across 8 agile stages.",
+      "is_system": true
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj-bms-01",
+      "name": "Enterprise Core Banking Transformation",
+      "code": "BMS-2026",
+      "description": "Next-generation retail banking ledger, payments event bus, and regulatory governance system.",
+      "client_name": "ABC Commercial Bank",
+      "start_date": "2026-06-01",
+      "end_date": "2026-12-31",
+      "type": "Enterprise Banking Platform",
+      "priority": "High",
+      "methodology_id": "meth-waterfall",
+      "current_phase_id": "ph-bms-3",
+      "status": "Active",
+      "created_at": "2026-09-21T07:37:43.085Z"
+    }
+  ],
+  "project_members": [
+    {
+      "id": "pm-1",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-pm-01",
+      "role_name": "Project Manager"
+    },
+    {
+      "id": "pm-2",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-ba-01",
+      "role_name": "Business Analyst"
+    },
+    {
+      "id": "pm-3",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-ta-01",
+      "role_name": "Technical Architect"
+    },
+    {
+      "id": "pm-4",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-tl-01",
+      "role_name": "Team Lead"
+    },
+    {
+      "id": "pm-5",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-dev-01",
+      "role_name": "Developer"
+    },
+    {
+      "id": "pm-6",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-qa-01",
+      "role_name": "Tester / QA"
+    },
+    {
+      "id": "pm-7",
+      "project_id": "proj-bms-01",
+      "user_id": "usr-client-01",
+      "role_name": "Client Representative"
+    }
+  ],
+  "phases": [
+    {
+      "id": "ph-bms-1",
+      "project_id": "proj-bms-01",
+      "name": "Planning",
+      "sequence": 1,
+      "status": "Completed",
+      "progress": 100,
+      "is_blocked": false,
+      "planned_days": 10,
+      "actual_days": 8,
+      "start_date": "2026-06-01",
+      "target_date": "2026-06-10"
+    },
+    {
+      "id": "ph-bms-2",
+      "project_id": "proj-bms-01",
+      "name": "Requirements",
+      "sequence": 2,
+      "status": "Completed",
+      "progress": 100,
+      "is_blocked": false,
+      "planned_days": 14,
+      "actual_days": 16,
+      "start_date": "2026-06-11",
+      "target_date": "2026-06-28"
+    },
+    {
+      "id": "ph-bms-3",
+      "project_id": "proj-bms-01",
+      "name": "Design",
+      "sequence": 3,
+      "status": "InProgress",
+      "progress": 65,
+      "is_blocked": true,
+      "block_reason": "HLD Client Signoff Pending & DB Partitioning Dispute Active.",
+      "planned_days": 15,
+      "actual_days": 18,
+      "start_date": "2026-06-29",
+      "target_date": "2026-07-16"
+    },
+    {
+      "id": "ph-bms-4",
+      "project_id": "proj-bms-01",
+      "name": "Development",
+      "sequence": 4,
+      "status": "Locked",
+      "progress": 0,
+      "is_blocked": true,
+      "block_reason": "Design Phase Gate Not Yet Approved.",
+      "planned_days": 30,
+      "actual_days": 0
+    },
+    {
+      "id": "ph-bms-5",
+      "project_id": "proj-bms-01",
+      "name": "Testing",
+      "sequence": 5,
+      "status": "Locked",
+      "progress": 0,
+      "is_blocked": true,
+      "planned_days": 20,
+      "actual_days": 0
+    },
+    {
+      "id": "ph-bms-6",
+      "project_id": "proj-bms-01",
+      "name": "Deployment",
+      "sequence": 6,
+      "status": "Locked",
+      "progress": 0,
+      "is_blocked": true,
+      "planned_days": 10,
+      "actual_days": 0
+    },
+    {
+      "id": "ph-bms-7",
+      "project_id": "proj-bms-01",
+      "name": "Maintenance",
+      "sequence": 7,
+      "status": "Locked",
+      "progress": 0,
+      "is_blocked": true,
+      "planned_days": 15,
+      "actual_days": 0
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "art-charter-01",
+      "project_id": "proj-bms-01",
+      "phase_id": "ph-bms-1",
+      "artifact_type": "Charter",
+      "title": "Project Charter & Business Objectives",
+      "description": "High-level business justification, ROI forecast, and governance boundaries.",
+      "owner_id": "usr-pm-01",
+      "status": "Published",
+      "current_version": "1.0",
+      "blocks_next_phase": true,
+      "content": "# Project Charter\n\n## 1. Executive Summary\nCore banking transformation for 5M retail accounts.",
+      "created_at": "2026-09-26T07:37:43.181Z"
+    },
+    {
+      "id": "art-srs-01",
+      "project_id": "proj-bms-01",
+      "phase_id": "ph-bms-2",
+      "artifact_type": "SRS",
+      "title": "Software Requirements Specification (SRS)",
+      "description": "Comprehensive functional requirements, regulatory compliance, and transaction throughput SLAs.",
+      "owner_id": "usr-ba-01",
+      "status": "Published",
+      "current_version": "2.0",
+      "blocks_next_phase": true,
+      "content": "# Software Requirements Specification (SRS)\n\n## 1. Functional Scope\nReal-time payments and ISO20022 compliance.\n\n## 2. Non-Functional SLAs\nSub-50ms transaction latency at 15,000 TPS.",
+      "created_at": "2026-10-06T07:37:43.181Z"
+    },
+    {
+      "id": "art-hld-01",
+      "project_id": "proj-bms-01",
+      "phase_id": "ph-bms-3",
+      "artifact_type": "HLD",
+      "title": "High-Level Design (HLD) Specification",
+      "description": "Event-driven distributed ledger architecture with Apache Kafka and multi-region failover.",
+      "owner_id": "usr-ta-01",
+      "status": "Under Review",
+      "current_version": "1.2",
+      "blocks_next_phase": true,
+      "content": "# High-Level Design (HLD)\n\n## 1. System Topology\nMicroservices mesh utilizing event sourcing and CQRS patterns.\n\n## 2. Security\nZero-trust mTLS encryption across all VPC peering links.",
+      "created_at": "2026-10-16T07:37:43.181Z"
+    },
+    {
+      "id": "art-lld-01",
+      "project_id": "proj-bms-01",
+      "phase_id": "ph-bms-3",
+      "artifact_type": "LLD",
+      "title": "Low-Level Design (LLD) & API Contracts",
+      "description": "OpenAPI schemas, entity relationship diagrams, database sharding strategies, and worker threads.",
+      "owner_id": "usr-tl-01",
+      "status": "Draft",
+      "current_version": "1.0",
+      "blocks_next_phase": true,
+      "content": "# Low-Level Design (LLD)\n\n## 1. Data Models\nAccount, Transaction, LedgerEntry, AuditTrail schemas.",
+      "created_at": "2026-10-19T07:37:43.181Z"
+    }
+  ],
+  "artifact_versions": [
+    {
+      "id": "v-1",
+      "artifact_id": "art-hld-01",
+      "version_number": "1.0",
+      "content": "# HLD Initial Draft",
+      "change_summary": "Initial draft",
+      "author_id": "usr-ta-01",
+      "created_at": "2026-10-16T07:37:43.181Z"
+    },
+    {
+      "id": "v-2",
+      "artifact_id": "art-hld-01",
+      "version_number": "1.1",
+      "content": "# HLD v1.1",
+      "change_summary": "Added Kafka partitioning specs",
+      "author_id": "usr-ta-01",
+      "created_at": "2026-10-18T07:37:43.181Z"
+    },
+    {
+      "id": "v-3",
+      "artifact_id": "art-hld-01",
+      "version_number": "1.2",
+      "content": "# HLD v1.2",
+      "change_summary": "Refined mTLS topology per audit review",
+      "author_id": "usr-ta-01",
+      "created_at": "2026-10-20T07:37:43.181Z"
+    }
+  ],
+  "artifact_reviewers": [
+    {
+      "id": "rev-1",
+      "artifact_id": "art-hld-01",
+      "user_id": "usr-tl-01",
+      "role_name": "Team Lead",
+      "status": "Reviewed",
+      "comments": "Architecture design verified for development feasibility.",
+      "updated_at": "2026-10-21T07:37:43.181Z"
+    },
+    {
+      "id": "rev-2",
+      "artifact_id": "art-hld-01",
+      "user_id": "usr-ta-01",
+      "role_name": "Technical Architect",
+      "status": "Reviewed",
+      "comments": "Signoff complete.",
+      "updated_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "artifact_approvers": [
+    {
+      "id": "app-1",
+      "artifact_id": "art-hld-01",
+      "user_id": "usr-pm-01",
+      "role_name": "Project Manager",
+      "sequence": 1,
+      "status": "Approved",
+      "comments": "Management budget approved.",
+      "updated_at": "2026-10-21T07:37:43.181Z"
+    },
+    {
+      "id": "app-2",
+      "artifact_id": "art-hld-01",
+      "user_id": "usr-client-01",
+      "role_name": "Client Representative",
+      "sequence": 2,
+      "status": "Pending",
+      "comments": "",
+      "updated_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "disputes": [
+    {
+      "id": "disp-001",
+      "project_id": "proj-bms-01",
+      "artifact_id": "art-hld-01",
+      "phase_id": "ph-bms-3",
+      "title": "Database Sharding vs Distributed SQL Ledger Disagreement",
+      "description": "Technical Architect recommends CockroachDB for multi-region ACID consistency, but Lead DBA proposes PostgreSQL with custom application-level hash sharding due to cost constraints.",
+      "dispute_type": "DESIGN_TRADEOFF",
+      "priority": "Critical",
+      "status": "Voting",
+      "raised_by": "usr-ta-01",
+      "assigned_mediator": "usr-pm-01",
+      "created_at": "2026-10-18T07:37:43.181Z",
+      "updated_at": "2026-10-21T07:37:43.181Z"
+    },
+    {
+      "id": "disp-002",
+      "project_id": "proj-bms-01",
+      "artifact_id": "art-srs-01",
+      "phase_id": "ph-bms-2",
+      "title": "SLA Throughput: 15,000 TPS vs Budget Hardware Constraints",
+      "description": "Client product owner requests 15,000 TPS burst throughput in the SRS, whereas Infrastructure team reports current on-prem HSM limits are capped at 8,500 TPS.",
+      "dispute_type": "REQUIREMENT_CONFLICT",
+      "priority": "High",
+      "status": "Under Discussion",
+      "raised_by": "usr-ba-01",
+      "assigned_mediator": "usr-pm-01",
+      "created_at": "2026-10-15T07:37:43.181Z",
+      "updated_at": "2026-10-21T07:37:43.181Z"
+    },
+    {
+      "id": "disp-003",
+      "project_id": "proj-bms-01",
+      "artifact_id": "art-charter-01",
+      "phase_id": "ph-bms-1",
+      "title": "Scope Clarification: Swift ISO20022 Cross-Border Settlement",
+      "description": "Dispute over whether Swift MX messaging should be included in MVP Release 1 or deferred to Release 2.",
+      "dispute_type": "SCOPE_CREEP",
+      "priority": "Medium",
+      "status": "Resolved",
+      "raised_by": "usr-pm-01",
+      "assigned_mediator": "usr-client-01",
+      "resolution": "Agreed in Steering Committee meeting to deliver ISO20022 in Phase 2 with separate milestone signoff.",
+      "resolved_at": "2026-10-11T07:37:43.181Z",
+      "created_at": "2026-10-03T07:37:43.181Z",
+      "updated_at": "2026-10-11T07:37:43.181Z"
+    }
+  ],
+  "dispute_comments": [
+    {
+      "id": "dc-1",
+      "dispute_id": "disp-001",
+      "user_id": "usr-ta-01",
+      "content": "Distributed SQL guarantees zero data loss during cloud zone failover without complex application dual-writes.",
+      "is_resolution_proposal": false,
+      "created_at": "2026-10-19T07:37:43.181Z"
+    },
+    {
+      "id": "dc-2",
+      "dispute_id": "disp-001",
+      "user_id": "usr-tl-01",
+      "content": "Proposal: Use Managed PostgreSQL with Citus extension. It gives us horizontal scaling with standard Postgres tooling and lowers license overhead by 40%.",
+      "is_resolution_proposal": true,
+      "created_at": "2026-10-20T07:37:43.181Z"
+    }
+  ],
+  "dispute_votes": [
+    {
+      "id": "dv-1",
+      "dispute_id": "disp-001",
+      "user_id": "usr-ta-01",
+      "vote": "agree",
+      "reason": "Citus compromise satisfies both architectural SLAs and team skills.",
+      "created_at": "2026-10-21T07:37:43.181Z"
+    },
+    {
+      "id": "dv-2",
+      "dispute_id": "disp-001",
+      "user_id": "usr-tl-01",
+      "vote": "agree",
+      "reason": "Development team supports this compromise.",
+      "created_at": "2026-10-21T07:37:43.181Z"
+    },
+    {
+      "id": "dv-3",
+      "dispute_id": "disp-001",
+      "user_id": "usr-pm-01",
+      "vote": "agree",
+      "reason": "Fits project delivery budget.",
+      "created_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "document_collaborators": [
+    {
+      "artifact_id": "art-hld-01",
+      "user_id": "usr-admin-01",
+      "cursor_position": {
+        "line": 1,
+        "ch": 0
+      },
+      "is_active": true,
+      "last_seen_at": "2026-10-21T07:57:57.682Z",
+      "id": "docu-1792569477683"
+    }
+  ],
+  "document_comments": [
+    {
+      "id": "dcomm-1",
+      "artifact_id": "art-hld-01",
+      "user_id": "usr-ta-01",
+      "content": "Please verify if Kafka consumer group rebalancing timeout of 3000ms is sufficient for spike workloads.",
+      "position_start": 12,
+      "position_end": 45,
+      "is_resolved": false,
+      "created_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "document_suggestions": [],
+  "meetings": [
+    {
+      "id": "mtg-01",
+      "project_id": "proj-bms-01",
+      "title": "HLD Architecture Review & Dispute Mediation Session",
+      "meeting_type": "Design Review",
+      "date": "2026-07-02",
+      "time": "14:00",
+      "location": "Conference Room Alpha & MS Teams",
+      "organizer": "John Smith (Project Manager)",
+      "agenda": "1. Resolve Database Sharding vs Distributed SQL Dispute\n2. Review Kafka event bus partitions\n3. Client signoff timeline",
+      "status": "Scheduled",
+      "created_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "meeting_participants": [
+    {
+      "id": "mp-1",
+      "meeting_id": "mtg-01",
+      "user_id": "usr-pm-01",
+      "role": "Organizer"
+    },
+    {
+      "id": "mp-2",
+      "meeting_id": "mtg-01",
+      "user_id": "usr-ta-01",
+      "role": "Presenter"
+    },
+    {
+      "id": "mp-3",
+      "meeting_id": "mtg-01",
+      "user_id": "usr-tl-01",
+      "role": "Reviewer"
+    },
+    {
+      "id": "mp-4",
+      "meeting_id": "mtg-01",
+      "user_id": "usr-client-01",
+      "role": "Stakeholder"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "dec-01",
+      "project_id": "proj-bms-01",
+      "meeting_id": "mtg-01",
+      "decision_code": "DEC-001",
+      "title": "Adoption of Event Sourcing with Citus PostgreSQL",
+      "description": "The architecture team and project management formally adopt Managed PostgreSQL with Citus for distributed ledger transactions.",
+      "decision_maker_id": "usr-pm-01",
+      "reason": "Balances 15K TPS horizontal scalability with strict banking audit constraints.",
+      "status": "Approved",
+      "created_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "action_items": [
+    {
+      "id": "act-01",
+      "project_id": "proj-bms-01",
+      "title": "Benchmark Citus distributed cluster under 15,000 TPS test load",
+      "assignee_id": "usr-dev-01",
+      "due_date": "2026-07-10",
+      "status": "In Progress",
+      "created_at": "2026-10-21T07:37:43.181Z"
+    }
+  ],
+  "traceability_links": [
+    {
+      "id": "tr-1",
+      "source_artifact_id": "art-charter-01",
+      "target_artifact_id": "art-srs-01",
+      "relationship_type": "OriginatesFrom",
+      "description": "Business requirements derived from charter"
+    },
+    {
+      "id": "tr-2",
+      "source_artifact_id": "art-srs-01",
+      "target_artifact_id": "art-hld-01",
+      "relationship_type": "Satisfies",
+      "description": "Architecture satisfies all functional requirements"
+    }
+  ],
+  "phase_gates": [],
+  "audit_logs": [
+    {
+      "id": "aud-01",
+      "project_id": "proj-bms-01",
+      "entity_type": "Dispute",
+      "entity_id": "disp-001",
+      "action": "DISPUTE_VOTING_INITIATED",
+      "user_id": "usr-pm-01",
+      "details": "Voting initiated for dispute \"Database Sharding vs Distributed SQL Ledger Disagreement\".",
+      "created_at": "2026-10-21T06:37:43.181Z"
+    },
+    {
+      "id": "aud-02",
+      "project_id": "proj-bms-01",
+      "entity_type": "Artifact",
+      "entity_id": "art-hld-01",
+      "action": "REVIEW_APPROVED",
+      "user_id": "usr-ta-01",
+      "details": "Technical Architect signed off technical review for \"High-Level Design (HLD) Specification\".",
+      "created_at": "2026-10-21T05:37:43.181Z"
+    }
+  ],
+  "notifications": [
+    {
+      "id": "notif-1",
+      "user_id": "usr-pm-01",
+      "title": "Dispute Voting in Progress",
+      "message": "Voting is currently active on Database Sharding Disagreement. 3 of 4 votes cast.",
+      "type": "Dispute",
+      "is_read": false,
+      "created_at": "2026-10-21T07:37:43.181Z"
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { fetchApi } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import { hasPermission } from '../utils/rbac';
-import { FileCheck2, CheckCircle2, XCircle, Lock, ArrowRight, User, ShieldCheck, Eye } from 'lucide-react';
+import { FileCheck2, CheckCircle2, XCircle, Lock, ArrowRight, User, ShieldCheck, Eye, Scale } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getAllDocumentTypes } from '../config/docRaci';
 
@@ -166,6 +166,14 @@ export default function ApprovalsPage({ activeUser }) {
                         <XCircle className="w-4 h-4" />
                         <span>Request Changes</span>
                       </button>
+                      <button
+                        onClick={() => navigate('/disputes')}
+                        className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Escalate review conflict to Dispute Center"
+                      >
+                        <Scale className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Dispute</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -262,6 +270,14 @@ export default function ApprovalsPage({ activeUser }) {
                       >
                         <XCircle className="w-4 h-4" />
                         <span>Reject</span>
+                      </button>
+                      <button
+                        onClick={() => navigate('/disputes')}
+                        className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Escalate approval deadlock to Dispute Center"
+                      >
+                        <Scale className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Dispute</span>
                       </button>
                     </div>
                   </div>

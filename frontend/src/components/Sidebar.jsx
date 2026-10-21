@@ -10,35 +10,31 @@ import {
   KeyRound,
   Layers,
   History,
-  ShieldCheck,
   FileCheck2,
-  Shield
+  Shield,
+  Scale
 } from 'lucide-react';
 
 import AppLogo from './AppLogo';
 
 export default function Sidebar({ activeUser }) {
   const isAdmin = activeUser?.role === 'Admin';
+  const isManager = activeUser?.role === 'Project Manager' || isAdmin;
 
-  // Strict Role Separation:
-  // Admin ONLY gets System Employee Management & Password Settings
-  // Non-Admin employees get SDLC Project Governance Menu
-  const navItems = isAdmin
-    ? [
-        { to: '/admin/users', label: 'Employees', icon: Shield },
-        { to: '/settings/password', label: 'Password', icon: KeyRound }
-      ]
-    : [
-        { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-        { to: '/analytics', label: 'Analytics', icon: Compass },
-        { to: '/my-work', label: 'My Work', icon: CheckSquare },
-        { to: '/projects', label: 'Projects', icon: FolderGit2 },
-        { to: '/documents', label: 'Documents', icon: FileText },
-        { to: '/approvals', label: 'Approvals', icon: FileCheck2 },
-        { to: '/settings/password', label: 'Password', icon: KeyRound },
-        { to: '/methodologies', label: 'Methodologies', icon: Layers },
-        { to: '/audit', label: 'Audit', icon: History }
-      ];
+  // Unified Navigation Items
+  const navItems = [
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/analytics', label: 'Analytics', icon: Compass },
+    { to: '/my-work', label: 'My Work', icon: CheckSquare },
+    { to: '/projects', label: 'Projects', icon: FolderGit2 },
+    { to: '/documents', label: 'Documents', icon: FileText },
+    { to: '/disputes', label: 'Disputes Center', icon: Scale, badge: 'New' },
+    { to: '/approvals', label: 'Approvals', icon: FileCheck2 },
+    ...(isManager ? [{ to: '/admin/users', label: 'Team & Credentials', icon: Shield, badge: 'PM' }] : []),
+    { to: '/methodologies', label: 'Methodologies', icon: Layers },
+    { to: '/audit', label: 'Audit Trail', icon: History },
+    { to: '/settings/password', label: 'Change Password', icon: KeyRound }
+  ];
 
   return (
     <aside className="w-64 bg-white border-r border-blue-100 flex flex-col justify-between h-screen sticky top-0 z-40 shadow-sm">
@@ -57,15 +53,22 @@ export default function Sidebar({ activeUser }) {
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
+                  `flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
                     isActive
                       ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/20'
-                      : 'text-blue-700 hover:text-blue-900 hover:bg-blue-50'
+                      : 'text-slate-700 hover:text-blue-900 hover:bg-blue-50'
                   }`
                 }
               >
-                <Icon className="w-4 h-4" />
-                <span>{item.label}</span>
+                <div className="flex items-center gap-3">
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </div>
+                {item.badge && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-700">
+                    {item.badge}
+                  </span>
+                )}
               </NavLink>
             );
           })}

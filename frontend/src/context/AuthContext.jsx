@@ -13,18 +13,34 @@ export function AuthProvider({ children }) {
         name: 'John Smith',
         role: 'Project Manager',
         title: 'Senior Project Manager',
-        systemRole: 'ADMIN'
+        systemRole: 'ADMIN',
+        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=John'
       };
-    } catch(e) {
+    } catch (e) {
       return null;
     }
   });
+
+  const [availableUsers, setAvailableUsers] = useState([]);
+
+  useEffect(() => {
+    // Fetch available demo users for the role switcher
+    fetchApi('/auth/demo-users')
+      .then(users => {
+        if (Array.isArray(users)) setAvailableUsers(users);
+      })
+      .catch(() => {});
+  }, []);
 
   const login = async (email, password) => {
     const res = await fetchApi('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password })
     });
+
+    if (res.token) {
+      localStorage.setItem('sdlc_user_token', res.token);
+    }
     if (res.user) {
       setUser(res.user);
       localStorage.setItem('sdlc_user_session', JSON.stringify(res.user));
@@ -32,21 +48,26 @@ export function AuthProvider({ children }) {
     return res;
   };
 
+  const switchUser = (newUser) => {
+    setUser(newUser);
+    localStorage.setItem('sdlc_user_session', JSON.stringify(newUser));
+  };
+
   const logout = () => {
     setUser(null);
     localStorage.removeItem('sdlc_user_session');
+    localStorage.removeItem('sdlc_user_token');
   };
 
   const changePassword = async (currentPassword, newPassword) => {
-    const res = await fetchApi('/auth/change-password', {
+    return await fetchApi('/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ userId: user?.id, currentPassword, newPassword })
     });
-    return res;
   };
 
   return (
-    <AuthContext.Provider value={{ user, setUser, login, logout, changePassword }}>
+    <AuthContext.Provider value={{ user, setUser: switchUser, availableUsers, login, logout, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

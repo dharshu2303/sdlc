@@ -422,7 +422,7 @@ export default function DocumentRepository({ activeUser }) {
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-400 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 truncate pr-2">
+                  <div className="flex items-center gap-2 truncate pr-2">
                     {canUserUploadThis ? (
                       <span className="text-blue-600 font-semibold flex items-center gap-1">
                         <UploadCloud className="w-3 h-3" /> Upload / Edit
@@ -432,6 +432,18 @@ export default function DocumentRepository({ activeUser }) {
                         <Eye className="w-3 h-3" /> View & Download
                       </span>
                     )}
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/documents/${art.id}/collaborate`);
+                      }}
+                      className="px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] flex items-center gap-1 border border-indigo-200 transition"
+                      title="Open Live Collaborative Markdown Editor"
+                    >
+                      <Users className="w-2.5 h-2.5" /> Collab
+                    </button>
                   </div>
                   <span className="font-semibold text-blue-600 flex items-center gap-1 shrink-0">
                     v{art.currentVersion} <ArrowUpRight className="w-3 h-3" />

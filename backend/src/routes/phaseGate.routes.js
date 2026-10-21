@@ -1,83 +1,97 @@
 const express = require('express');
-const store = require('../dataStore');
+const { supabaseAdmin } = require('../config/supabaseClient');
 
 const router = express.Router();
 
-router.get('/evaluate/:phaseId', (req, res) => {
-  const { phaseId } = req.params;
+router.get('/evaluate/:phaseId', async (req, res) => {
+  try {
+    const { phaseId } = req.params;
 
-  const phase = store.phases.find(p => p.id === phaseId);
-  if (!phase) return res.status(404).json({ error: 'Phase not found' });
+    const { data: phase, error } = await supabaseAdmin.from('phases').select('*').eq('id', phaseId).single();
+    if (error || !phase) return res.status(404).json({ error: 'Phase not found' });
 
-  const phaseArtifacts = store.artifacts.filter(a => a.phaseId === phaseId);
-  const totalArtifacts = phaseArtifacts.length;
-  const publishedArtifacts = phaseArtifacts.filter(a => a.status === 'Published');
+    const { data: phaseArtifacts } = await supabaseAdmin.from('artifacts').select('*').eq('phase_id', phaseId);
+    const artifacts = phaseArtifacts || [];
+    const totalArtifacts = artifacts.length;
 
-  const pendingApprovals = phaseArtifacts.flatMap(a =>
-    store.approvers.filter(app => app.artifactId === a.id && app.status === 'Pending')
-  );
+    // Both Approved and Published satisfy phase gate criteria
+    const passedArtifacts = artifacts.filter(a => a.status === 'Published' || a.status === 'Approved');
 
-  const pendingReviews = phaseArtifacts.flatMap(a =>
-    store.reviewers.filter(r => r.artifactId === a.id && r.status === 'Pending')
-  );
+    const { data: allApprovers } = await supabaseAdmin.from('artifact_approvers').select('*').eq('status', 'Pending');
+    const { data: allReviewers } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('status', 'Pending');
 
-  const blockers = [];
+    const pendingApprovals = (allApprovers || []).filter(app => artifacts.some(a => a.id === app.artifact_id));
+    const pendingReviews = (allReviewers || []).filter(rev => artifacts.some(a => a.id === rev.artifact_id));
 
-  if (totalArtifacts === 0) {
-    blockers.push('No required artifacts created for this phase.');
-  }
-  if (publishedArtifacts.length < totalArtifacts) {
-    blockers.push(`${totalArtifacts - publishedArtifacts.length} required artifact(s) are not fully published/approved.`);
-  }
-  if (pendingApprovals.length > 0) {
-    blockers.push(`${pendingApprovals.length} pending stakeholder signoff approval(s) remaining.`);
-  }
-  if (pendingReviews.length > 0) {
-    blockers.push(`${pendingReviews.length} pending technical review(s) remaining.`);
-  }
+    const blockers = [];
 
-  const isGatePassed = blockers.length === 0;
-
-  phase.isBlocked = !isGatePassed;
-  phase.blockReason = isGatePassed ? null : blockers.join(' | ');
-
-  if (isGatePassed) {
-    phase.status = 'Completed';
-    phase.progress = 100;
-    if (!phase.completedAt) {
-      phase.completedAt = new Date().toISOString().split('T')[0];
+    if (totalArtifacts === 0) {
+      blockers.push('No required artifacts registered for this phase.');
     }
-    if (phase.startedAt) {
-      const startMs = new Date(phase.startedAt).getTime();
-      const endMs = new Date(phase.completedAt).getTime();
-      const diffDays = Math.max(1, Math.ceil((endMs - startMs) / (1000 * 60 * 60 * 24)));
-      phase.actualDays = diffDays;
+    if (passedArtifacts.length < totalArtifacts) {
+      blockers.push(`${totalArtifacts - passedArtifacts.length} required deliverable(s) are not yet approved/published.`);
+    }
+    if (pendingApprovals.length > 0) {
+      blockers.push(`${pendingApprovals.length} pending stakeholder signoff approval(s) remaining.`);
+    }
+    if (pendingReviews.length > 0) {
+      blockers.push(`${pendingReviews.length} pending technical review(s) remaining.`);
     }
 
-    const projectPhases = store.phases.filter(p => p.projectId === phase.projectId).sort((a,b) => a.sequence - b.sequence);
-    const currentSeq = phase.sequence;
-    const nextPhase = projectPhases.find(p => p.sequence === currentSeq + 1);
-    if (nextPhase && (nextPhase.status === 'Locked' || nextPhase.status === 'Pending')) {
-      nextPhase.status = 'InProgress';
-      nextPhase.isBlocked = false;
-      nextPhase.startedAt = new Date().toISOString().split('T')[0];
-      const proj = store.projects.find(p => p.id === phase.projectId);
-      if (proj) proj.currentPhaseId = nextPhase.id;
-    }
-  } else {
-    phase.status = 'InProgress';
-  }
+    const isGatePassed = blockers.length === 0;
 
-  return res.json({
-    phaseName: phase.name,
-    progress: phase.progress,
-    isGatePassed,
-    blockers,
-    totalArtifacts,
-    publishedArtifactsCount: publishedArtifacts.length,
-    pendingApprovalsCount: pendingApprovals.length,
-    pendingReviewsCount: pendingReviews.length
-  });
+    // Update phase in Supabase
+    if (isGatePassed) {
+      await supabaseAdmin.from('phases').update({
+        status: 'Completed',
+        progress: 100,
+        is_blocked: false,
+        block_reason: null,
+        updated_at: new Date().toISOString()
+      }).eq('id', phaseId);
+
+      // Unlock next phase if exists
+      const { data: allPhases } = await supabaseAdmin
+        .from('phases')
+        .select('*')
+        .eq('project_id', phase.project_id)
+        .order('sequence', { ascending: true });
+
+      const nextPhase = (allPhases || []).find(p => p.sequence === phase.sequence + 1);
+      if (nextPhase && (nextPhase.status === 'Locked' || nextPhase.status === 'Pending')) {
+        await supabaseAdmin.from('phases').update({
+          status: 'InProgress',
+          is_blocked: false,
+          block_reason: null,
+          updated_at: new Date().toISOString()
+        }).eq('id', nextPhase.id);
+
+        await supabaseAdmin.from('projects').update({
+          current_phase_id: nextPhase.id,
+          updated_at: new Date().toISOString()
+        }).eq('id', phase.project_id);
+      }
+    } else {
+      await supabaseAdmin.from('phases').update({
+        is_blocked: true,
+        block_reason: blockers.join(' | '),
+        updated_at: new Date().toISOString()
+      }).eq('id', phaseId);
+    }
+
+    return res.json({
+      phaseName: phase.name,
+      progress: isGatePassed ? 100 : phase.progress,
+      isGatePassed,
+      blockers,
+      totalArtifacts,
+      publishedArtifactsCount: passedArtifacts.length,
+      pendingApprovalsCount: pendingApprovals.length,
+      pendingReviewsCount: pendingReviews.length
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

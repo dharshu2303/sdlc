@@ -4,7 +4,7 @@ import { fetchApi } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import FileUploadZone from '../components/FileUploadZone';
 import { canEditArtifactType } from '../utils/rbac';
-import { FileText, Download, Save, Send, History, GitCompare, UserCheck, ArrowLeft, Lock, FileCheck, HardDrive, CheckCircle2, ShieldCheck, User, AlertTriangle } from 'lucide-react';
+import { FileText, Download, Save, Send, History, GitCompare, UserCheck, ArrowLeft, Lock, FileCheck, HardDrive, CheckCircle2, ShieldCheck, User, AlertTriangle, Users, Scale } from 'lucide-react';
 import { getAllDocumentTypes } from '../config/docRaci';
 
 export default function DocumentEditor({ activeUser }) {
@@ -117,7 +117,23 @@ export default function DocumentEditor({ activeUser }) {
           <span>Back to Repository</span>
         </button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => navigate(`/documents/${artifact.id}/collaborate`)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-700 hover:bg-indigo-100 font-bold transition shadow-xs"
+          >
+            <Users className="w-4 h-4 text-indigo-600" />
+            <span>Live Collaborative Editor</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/disputes')}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 hover:bg-amber-100 font-bold transition shadow-xs"
+          >
+            <Scale className="w-4 h-4 text-amber-600" />
+            <span>Dispute Center</span>
+          </button>
+
           {isPendingUpload ? (
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-semibold">
               <AlertTriangle className="w-4 h-4 text-amber-600" />

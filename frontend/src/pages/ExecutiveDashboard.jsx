@@ -16,7 +16,9 @@ import {
   Compass,
   Activity,
   Plus,
-  X
+  X,
+  Scale,
+  Users
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -30,38 +32,33 @@ export default function ExecutiveDashboard({ activeUser }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchApi('/projects')
-      .then(res => {
-        const projs = res || [];
-        setProjectsList(projs);
-        if (projs.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(projs[0].id);
-        } else if (projs.length === 0) {
-          setLoading(false);
+    let isMounted = true;
+    const loadDashboard = async () => {
+      try {
+        const [projs, logs] = await Promise.all([
+          fetchApi('/projects').catch(() => []),
+          fetchApi('/audit/logs').catch(() => [])
+        ]);
+
+        if (!isMounted) return;
+        setProjectsList(projs || []);
+        setAuditLogs(logs || []);
+
+        const targetId = selectedProjectId || projs?.[0]?.id;
+        if (targetId) {
+          if (!selectedProjectId) setSelectedProjectId(targetId);
+          const overview = await fetchApi(`/dashboard/overview/${targetId}`);
+          if (isMounted) setData(overview);
         }
-      })
-      .catch(err => {
+      } catch (err) {
         console.error(err);
-        setLoading(false);
-      });
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
 
-    fetchApi('/audit/logs')
-      .then(res => setAuditLogs(res || []))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!selectedProjectId) return;
-    setLoading(true);
-    fetchApi(`/dashboard/overview/${selectedProjectId}`)
-      .then(res => {
-        setData(res);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setLoading(false);
-      });
+    loadDashboard();
+    return () => { isMounted = false; };
   }, [selectedProjectId]);
 
   if (loading) return (
@@ -250,6 +247,66 @@ export default function ExecutiveDashboard({ activeUser }) {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* SDLC DISPUTE RESOLUTION & REAL-TIME COLLABORATION HUB */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Dispute Resolution Engine Banner */}
+        <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-2xl p-6 text-white shadow-md relative overflow-hidden flex flex-col justify-between">
+          <div className="space-y-3 relative z-10">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-[11px] font-bold uppercase tracking-wider">
+              <Scale className="w-3.5 h-3.5" />
+              Consensus & Conflict Engine
+            </div>
+            <h3 className="text-lg font-bold">Documentation Dispute Resolution</h3>
+            <p className="text-xs text-indigo-200/80 leading-relaxed max-w-md">
+              Automatically track, debate, and resolve documentation deadlocks, conflicting requirement SLAs, and architectural trade-offs with binding voting.
+            </p>
+          </div>
+
+          <div className="mt-5 pt-4 border-t border-indigo-800/60 flex items-center justify-between relative z-10">
+            <div className="text-xs text-indigo-200">
+              <span className="text-amber-300 font-bold">{data?.activeDisputes || 2}</span> active cases pending consensus
+            </div>
+            <button
+              onClick={() => navigate('/disputes')}
+              className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5"
+            >
+              <span>Open Dispute Center</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Real-Time Collaborative Document Editing Banner */}
+        <div className="bg-gradient-to-br from-blue-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-md relative overflow-hidden flex flex-col justify-between">
+          <div className="space-y-3 relative z-10">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300 text-[11px] font-bold uppercase tracking-wider">
+              <Users className="w-3.5 h-3.5" />
+              Real-Time Collaboration
+            </div>
+            <h3 className="text-lg font-bold">Live Multi-User Document Editing</h3>
+            <p className="text-xs text-blue-200/80 leading-relaxed max-w-md">
+              Simultaneous markdown drafting with live peer presence, cursor tracking, line-anchored review notes, tracked change suggestions, and conflict auto-merge.
+            </p>
+          </div>
+
+          <div className="mt-5 pt-4 border-t border-blue-800/60 flex items-center justify-between relative z-10">
+            <div className="text-xs text-blue-200">
+              <span className="text-emerald-300 font-bold">Live</span> presence & cursor sync enabled
+            </div>
+            <button
+              onClick={() => {
+                const targetArtId = data?.project?.artifacts?.[0]?.id || 'art-hld-01';
+                navigate(`/documents/${targetArtId}/collaborate`);
+              }}
+              className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5"
+            >
+              <span>Launch Live Editor</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

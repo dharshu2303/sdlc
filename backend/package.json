@@ -1,28 +1,23 @@
 {
   "name": "sdlc-governance-backend",
-  "version": "1.0.0",
-  "description": "SDLC Documentation Governance Platform Backend",
+  "version": "2.0.0",
+  "description": "SDLC Documentation Governance Platform Backend - Supabase Edition",
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js",
-    "db:push": "npx prisma db push",
-    "db:seed": "node prisma/seed.js"
+    "start": "node src/server.js"
   },
   "dependencies": {
-    "@prisma/client": "^5.10.0",
+    "@supabase/supabase-js": "^2.118.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^9.9.4"
+    "sanitize-html": "^2.18.1",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0",
-    "prisma": "^5.10.0"
-  },
-  "prisma": {
-    "seed": "node prisma/seed.js"
+    "nodemon": "^3.1.0"
   }
 }

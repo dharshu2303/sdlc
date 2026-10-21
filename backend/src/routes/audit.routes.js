@@ -1,52 +1,75 @@
 const express = require('express');
-const store = require('../dataStore');
-const { AuditLog } = require('../models/Governance');
+const { supabaseAdmin } = require('../config/supabaseClient');
 
 const router = express.Router();
 
 router.get('/logs', async (req, res) => {
-  const { projectId } = req.query;
-  let logs = [];
-
   try {
-    const query = projectId && projectId !== 'ALL' ? { projectId } : {};
-    logs = await AuditLog.find(query).sort({ createdAt: -1 }).lean();
-  } catch (e) {
-    logs = store.auditLogs || [];
+    const { projectId } = req.query;
+    let query = supabaseAdmin.from('audit_logs').select('*');
+    if (projectId && projectId !== 'ALL') {
+      query = query.eq('project_id', projectId);
+    }
+
+    const { data: logs, error } = await query.order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { data: users } = await supabaseAdmin.from('users').select('id, name, role, email, avatar');
+    const { data: projects } = await supabaseAdmin.from('projects').select('id, name, code');
+
+    const result = (logs || []).map(l => {
+      const user = (users || []).find(u => u.id === l.user_id);
+      const project = (projects || []).find(p => p.id === l.project_id);
+      return {
+        id: l.id,
+        projectId: l.project_id,
+        action: l.action,
+        entityType: l.entity_type,
+        entityId: l.entity_id,
+        details: l.details,
+        reason: l.reason,
+        createdAt: l.created_at,
+        user: user || { name: 'Member', role: 'Contributor' },
+        project: project || { name: 'SDLC Platform' }
+      };
+    });
+
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  // If DB returned fewer or empty, merge with in-memory store
-  if (!logs || logs.length === 0) {
-    logs = store.auditLogs || [];
-  }
-
-  if (projectId && projectId !== 'ALL') {
-    logs = logs.filter(l => l.projectId === projectId);
-  }
-
-  const result = logs.map(l => {
-    const user = store.users.find(u => u.id === l.userId || u.email === l.userId);
-    const project = store.projects.find(p => p.id === l.projectId);
-    return {
-      ...l,
-      user: user || { name: l.userName || 'Member', role: l.userRole || 'Contributor' },
-      project: project || { name: 'Project Space' }
-    };
-  });
-
-  return res.json(result);
 });
 
-router.get('/notifications', (req, res) => {
-  const userId = req.query.userId || req.user?.id || 'usr-pm-01';
-  const list = (store.notifications || []).filter(n => n.userId === userId);
-  return res.json(list);
+router.get('/notifications', async (req, res) => {
+  try {
+    const userId = req.query.userId || req.user?.id || 'usr-pm-01';
+    const { data: list, error } = await supabaseAdmin
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(list || []);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-router.put('/notifications/:id/read', (req, res) => {
-  const notif = (store.notifications || []).find(n => n.id === req.params.id);
-  if (notif) notif.isRead = true;
-  return res.json(notif || {});
+router.put('/notifications/:id/read', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

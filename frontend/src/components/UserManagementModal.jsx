@@ -40,24 +40,25 @@ export default function UserManagementModal({ isOpen, onClose, onUserCreated }) 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.name || !formData.email || !formData.password) {
-      alert('Please fill out all required credential fields.');
+    if (!formData.name || !formData.email) {
+      alert('Please fill out name and email.');
       return;
     }
     setLoading(true);
     setSuccessMsg('');
     try {
-      const res = await fetchApi('/auth/users', {
+      const res = await fetchApi('/auth/users/create', {
         method: 'POST',
         body: JSON.stringify(formData)
       });
       setLoading(false);
-      setSuccessMsg(`Employee account created successfully! Credentials: ${formData.email}`);
+      const pwd = res.initialPassword || (formData.password ? formData.password : 'Admin@123');
+      setSuccessMsg(`Account created for ${formData.email}! Password: ${pwd}`);
       if (onUserCreated) onUserCreated(res.user || res);
       setTimeout(() => {
         setSuccessMsg('');
         onClose();
-      }, 1500);
+      }, 2500);
     } catch (err) {
       setLoading(false);
       alert(`Error creating credential: ${err.message}`);

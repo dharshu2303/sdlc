@@ -1,247 +1,359 @@
 const express = require('express');
-const store = require('../dataStore');
-const { syncEntityToMongo } = require('../config/db');
+const { v4: uuidv4 } = require('uuid');
+const { supabaseAdmin } = require('../config/supabaseClient');
+const { recordAuditLog } = require('../utils/auditLogger');
 
 const router = express.Router();
 
-// Direct File Download Endpoint
-router.get('/download/:id', (req, res) => {
-  const artifact = store.artifacts.find(a => a.id === req.params.id);
-  if (!artifact) return res.status(404).json({ error: 'Artifact file not found' });
+// 1. GET /api/artifacts/download/:id - Direct File Download
+router.get('/download/:id', async (req, res) => {
+  try {
+    const { data: artifact } = await supabaseAdmin.from('artifacts').select('*').eq('id', req.params.id).single();
+    if (!artifact) return res.status(404).json({ error: 'Artifact not found' });
 
-  const fileName = artifact.fileName || `${artifact.artifactType}_${artifact.title.replace(/\s+/g, '_')}_v${artifact.currentVersion}.pdf`;
-  const fileContent = artifact.fileData || artifact.content || `# ${artifact.title}\n\nDocument Specification v${artifact.currentVersion}`;
+    const fileName = artifact.file_name || `${artifact.artifact_type}_${artifact.title.replace(/\s+/g, '_')}_v${artifact.current_version}.md`;
+    const fileContent = artifact.content || `# ${artifact.title}\n\nDeliverable specification v${artifact.current_version}`;
 
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-  return res.send(Buffer.from(fileContent, 'utf-8'));
-});
-
-// Download Version Specific File
-router.get('/download/version/:versionId', (req, res) => {
-  const ver = store.versions.find(v => v.id === req.params.versionId);
-  if (!ver) return res.status(404).json({ error: 'Version file snapshot not found' });
-
-  const fileName = ver.fileName || `Version_${ver.versionNumber}.pdf`;
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-  return res.send(Buffer.from(ver.content || 'Version Document Snapshot', 'utf-8'));
-});
-
-// List Artifacts with File Metadata
-router.get('/', (req, res) => {
-  const { projectId, phaseId, status, ownerId, search } = req.query;
-  let list = store.artifacts;
-
-  if (projectId) list = list.filter(a => a.projectId === projectId);
-  if (phaseId) list = list.filter(a => a.phaseId === phaseId);
-  if (status) list = list.filter(a => a.status === status);
-  if (ownerId) list = list.filter(a => a.ownerId === ownerId);
-  if (search) {
-    const q = search.toLowerCase();
-    list = list.filter(a => a.title.toLowerCase().includes(q) || a.artifactType.toLowerCase().includes(q) || (a.fileName && a.fileName.toLowerCase().includes(q)));
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    return res.send(Buffer.from(fileContent, 'utf-8'));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  const result = list.map(a => ({
-    ...a,
-    project: store.projects.find(p => p.id === a.projectId),
-    phase: store.phases.find(ph => ph.id === a.phaseId),
-    owner: store.users.find(u => u.id === a.ownerId),
-    reviewers: store.reviewers.filter(r => r.artifactId === a.id).map(r => ({ ...r, user: store.users.find(u => u.id === r.userId) })),
-    approvers: store.approvers.filter(app => app.artifactId === a.id).map(app => ({ ...app, user: store.users.find(u => u.id === app.userId) })),
-    versions: store.versions.filter(v => v.artifactId === a.id)
-  }));
-
-  return res.json(result);
 });
 
-// Get Single Artifact
-router.get('/:id', (req, res) => {
-  const artifact = store.artifacts.find(a => a.id === req.params.id);
-  if (!artifact) return res.status(404).json({ error: 'Artifact not found' });
+// 2. GET /api/artifacts/download/version/:versionId - Download Specific Version Snapshot
+router.get('/download/version/:versionId', async (req, res) => {
+  try {
+    const { data: ver } = await supabaseAdmin.from('artifact_versions').select('*').eq('id', req.params.versionId).single();
+    if (!ver) return res.status(404).json({ error: 'Version record not found' });
 
-  const project = store.projects.find(p => p.id === artifact.projectId);
-  const phase = store.phases.find(ph => ph.id === artifact.phaseId);
-  const owner = store.users.find(u => u.id === artifact.ownerId);
-  const reviewers = store.reviewers.filter(r => r.artifactId === artifact.id).map(r => ({ ...r, user: store.users.find(u => u.id === r.userId) }));
-  const approvers = store.approvers.filter(app => app.artifactId === artifact.id).map(app => ({ ...app, user: store.users.find(u => u.id === app.userId) }));
-  const versions = store.versions.filter(v => v.artifactId === artifact.id).map(v => ({ ...v, author: store.users.find(u => u.id === v.authorId) }));
-
-  return res.json({ ...artifact, project, phase, owner, reviewers, approvers, versions });
+    const fileName = ver.file_name || `Version_${ver.version_number}.md`;
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    return res.send(Buffer.from(ver.content || 'Version Document Snapshot', 'utf-8'));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-// Upload New Artifact Document File (PDF, DOCX, XLSX, etc.)
-router.post('/upload', (req, res) => {
-  const {
-    projectId,
-    phaseId,
-    artifactType,
-    title,
-    description,
-    ownerId,
-    fileName,
-    fileSize,
-    fileType,
-    fileData,
-    origin,
-    reviewerUserIds,
-    approverUserIds
-  } = req.body;
+// 3. GET /api/artifacts - List artifacts with filters & search
+router.get('/', async (req, res) => {
+  try {
+    const { projectId, phaseId, status, ownerId, search } = req.query;
+    let query = supabaseAdmin.from('artifacts').select('*');
 
-  const currentUserId = ownerId || req.user?.id || 'usr-ba-01';
-  const artifactId = `art-${Date.now()}`;
+    if (projectId) query = query.eq('project_id', projectId);
+    if (phaseId) query = query.eq('phase_id', phaseId);
+    if (status && status !== 'All') query = query.eq('status', status);
+    if (ownerId) query = query.eq('owner_id', ownerId);
 
-  const newArtifact = {
-    id: artifactId,
-    projectId: projectId,
-    phaseId: phaseId,
-    artifactType: artifactType || 'SRS',
-    title: title || fileName || 'Uploaded Document',
-    description: description || `Uploaded file ${fileName}`,
-    ownerId: currentUserId,
-    status: 'Submitted',
-    currentVersion: '1.0',
-    fileName: fileName || 'Document.pdf',
-    fileSize: fileSize || '2.1 MB',
-    fileType: fileType || 'pdf',
-    fileData: fileData || 'Document payload content',
-    content: `# ${title || fileName}\n\nDocument Specification File Attached: ${fileName}`,
-    origin: origin || 'Document Upload',
-    blocksNextPhase: true
-  };
+    const { data: artifacts, error } = await query.order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
 
-  store.artifacts.unshift(newArtifact);
+    const { data: projects } = await supabaseAdmin.from('projects').select('id, name, code');
+    const { data: phases } = await supabaseAdmin.from('phases').select('id, name, sequence');
+    const { data: users } = await supabaseAdmin.from('users').select('id, name, role, avatar');
+    const { data: allReviewers } = await supabaseAdmin.from('artifact_reviewers').select('*');
+    const { data: allApprovers } = await supabaseAdmin.from('artifact_approvers').select('*');
+    const { data: allVersions } = await supabaseAdmin.from('artifact_versions').select('*');
 
-  // Version 1.0 Snapshot
-  store.versions.unshift({
-    id: `ver-${Date.now()}`,
-    artifactId,
-    versionNumber: '1.0',
-    fileName: newArtifact.fileName,
-    fileSize: newArtifact.fileSize,
-    content: newArtifact.content,
-    changeSummary: `Uploaded ${fileName} (${fileSize})`,
-    authorId: currentUserId,
-    status: 'Submitted',
-    createdAt: new Date().toISOString()
-  });
+    let list = (artifacts || []).map(a => {
+      const proj = (projects || []).find(p => p.id === a.project_id);
+      const ph = (phases || []).find(phase => phase.id === a.phase_id);
+      const owner = (users || []).find(u => u.id === a.owner_id);
+      const revs = (allReviewers || []).filter(r => r.artifact_id === a.id).map(r => ({
+        ...r,
+        user: (users || []).find(u => u.id === r.user_id)
+      }));
+      const apps = (allApprovers || []).filter(app => app.artifact_id === a.id).map(app => ({
+        ...app,
+        user: (users || []).find(u => u.id === app.user_id)
+      }));
+      const vers = (allVersions || []).filter(v => v.artifact_id === a.id);
 
-  // Assign Reviewers
-  if (reviewerUserIds && Array.isArray(reviewerUserIds)) {
-    reviewerUserIds.forEach(rUser => {
-      store.reviewers.push({
-        id: `rev-${Date.now()}-${Math.random()}`,
-        artifactId,
-        userId: rUser.userId || rUser,
-        roleName: rUser.roleName || 'Reviewer',
-        status: 'Pending'
-      });
+      return {
+        id: a.id,
+        projectId: a.project_id,
+        phaseId: a.phase_id,
+        artifactType: a.artifact_type,
+        title: a.title,
+        description: a.description,
+        currentVersion: a.current_version,
+        status: a.status,
+        confidentiality: a.confidentiality || 'Internal',
+        dueDate: a.due_date,
+        blocksNextPhase: a.blocks_next_phase,
+        content: a.content,
+        fileName: a.file_name,
+        fileSize: a.file_size,
+        fileType: a.file_type,
+        project: proj,
+        phase: ph,
+        owner: owner || { name: 'Author', role: 'Member' },
+        reviewers: revs,
+        approvers: apps,
+        versions: vers,
+        rejectionReason: a.rejection_reason,
+        createdAt: a.created_at,
+        updatedAt: a.updated_at
+      };
     });
-  }
 
-  // Assign Approvers
-  if (approverUserIds && Array.isArray(approverUserIds)) {
-    approverUserIds.forEach((aUser, idx) => {
-      store.approvers.push({
-        id: `app-${Date.now()}-${Math.random()}`,
-        artifactId,
-        userId: aUser.userId || aUser,
-        roleName: aUser.roleName || 'Approver',
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(a =>
+        a.title.toLowerCase().includes(q) ||
+        a.artifactType.toLowerCase().includes(q) ||
+        (a.fileName && a.fileName.toLowerCase().includes(q))
+      );
+    }
+
+    return res.json(list);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. GET /api/artifacts/:id - Single artifact detail
+router.get('/:id', async (req, res) => {
+  try {
+    const { data: a, error } = await supabaseAdmin.from('artifacts').select('*').eq('id', req.params.id).single();
+    if (error || !a) return res.status(404).json({ error: 'Artifact not found' });
+
+    const { data: proj } = await supabaseAdmin.from('projects').select('*').eq('id', a.project_id).single();
+    const { data: ph } = await supabaseAdmin.from('phases').select('*').eq('id', a.phase_id).single();
+    const { data: users } = await supabaseAdmin.from('users').select('id, name, email, role, avatar');
+    const { data: revs } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('artifact_id', a.id);
+    const { data: apps } = await supabaseAdmin.from('artifact_approvers').select('*').eq('artifact_id', a.id).order('sequence', { ascending: true });
+    const { data: vers } = await supabaseAdmin.from('artifact_versions').select('*').eq('artifact_id', a.id).order('created_at', { ascending: false });
+
+    const owner = (users || []).find(u => u.id === a.owner_id);
+
+    const enrichedRevs = (revs || []).map(r => ({
+      ...r,
+      user: (users || []).find(u => u.id === r.user_id)
+    }));
+
+    const enrichedApps = (apps || []).map(app => ({
+      ...app,
+      user: (users || []).find(u => u.id === app.user_id)
+    }));
+
+    const enrichedVers = (vers || []).map(v => ({
+      ...v,
+      author: (users || []).find(u => u.id === v.author_id)
+    }));
+
+    return res.json({
+      id: a.id,
+      projectId: a.project_id,
+      phaseId: a.phase_id,
+      artifactType: a.artifact_type,
+      title: a.title,
+      description: a.description,
+      currentVersion: a.current_version,
+      status: a.status,
+      confidentiality: a.confidentiality,
+      dueDate: a.due_date,
+      blocksNextPhase: a.blocks_next_phase,
+      content: a.content,
+      fileName: a.file_name,
+      fileSize: a.file_size,
+      fileType: a.file_type,
+      rejectionReason: a.rejection_reason,
+      project: proj,
+      phase: ph,
+      owner: owner || { name: 'Author', role: 'Member' },
+      reviewers: enrichedRevs,
+      approvers: enrichedApps,
+      versions: enrichedVers,
+      createdAt: a.created_at,
+      updatedAt: a.updated_at
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. POST /api/artifacts/upload - Create/Upload Deliverable with Signoff Workflow
+router.post('/upload', async (req, res) => {
+  try {
+    const {
+      projectId,
+      phaseId,
+      artifactType,
+      title,
+      description,
+      ownerId,
+      fileName,
+      fileSize,
+      fileType,
+      fileData,
+      content,
+      reviewerUserIds,
+      approverUserIds
+    } = req.body;
+
+    const currentUserId = ownerId || req.user?.id || 'usr-ba-01';
+    const artifactId = `art-${Date.now()}`;
+
+    const artifactRecord = {
+      id: artifactId,
+      project_id: projectId,
+      phase_id: phaseId,
+      artifact_type: artifactType || 'SRS',
+      title: title || fileName || 'Deliverable Specification',
+      description: description || `Document deliverable for ${title || fileName}`,
+      owner_id: currentUserId,
+      status: 'Submitted',
+      current_version: '1.0',
+      file_name: fileName || `${artifactType || 'Doc'}_v1.0.md`,
+      file_size: fileSize || '1.2 MB',
+      file_type: fileType || 'md',
+      content: content || fileData || `# ${title || fileName}\n\nDeliverable Content Specification.`,
+      blocks_next_phase: true,
+      created_at: new Date().toISOString()
+    };
+
+    await supabaseAdmin.from('artifacts').insert(artifactRecord);
+
+    // Initial version record
+    await supabaseAdmin.from('artifact_versions').insert({
+      id: uuidv4(),
+      artifact_id: artifactId,
+      version_number: '1.0',
+      file_name: artifactRecord.file_name,
+      file_size: artifactRecord.file_size,
+      content: artifactRecord.content,
+      change_summary: `Initial upload: ${artifactRecord.file_name}`,
+      author_id: currentUserId,
+      status: 'Submitted',
+      created_at: new Date().toISOString()
+    });
+
+    // Assign Reviewers
+    if (reviewerUserIds && Array.isArray(reviewerUserIds)) {
+      const revRecords = reviewerUserIds.map(r => ({
+        id: uuidv4(),
+        artifact_id: artifactId,
+        user_id: r.userId || r,
+        role_name: r.roleName || 'Technical Reviewer',
+        status: 'Pending',
+        updated_at: new Date().toISOString()
+      }));
+      await supabaseAdmin.from('artifact_reviewers').insert(revRecords);
+    }
+
+    // Assign Approvers
+    if (approverUserIds && Array.isArray(approverUserIds)) {
+      const appRecords = approverUserIds.map((a, idx) => ({
+        id: uuidv4(),
+        artifact_id: artifactId,
+        user_id: a.userId || a,
+        role_name: a.roleName || 'Executive Approver',
         sequence: idx + 1,
-        status: 'Pending'
-      });
+        status: 'Pending',
+        updated_at: new Date().toISOString()
+      }));
+      await supabaseAdmin.from('artifact_approvers').insert(appRecords);
+    }
+
+    await recordAuditLog({
+      projectId,
+      entityType: 'Artifact',
+      entityId: artifactId,
+      action: 'DOCUMENT_SUBMITTED',
+      userId: currentUserId,
+      userName: req.user?.name || 'Author',
+      userRole: req.user?.role || 'Author',
+      documentTitle: artifactRecord.title,
+      details: `Uploaded and submitted "${artifactRecord.title}" (v1.0) for technical review.`
     });
+
+    return res.status(201).json(artifactRecord);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  const { recordAuditLog } = require('../utils/auditLogger');
-  const user = store.users.find(u => u.id === currentUserId || u.email === currentUserId) || { name: 'Author', role: 'Author' };
-
-  recordAuditLog({
-    projectId: newArtifact.projectId,
-    entityType: 'Artifact',
-    entityId: artifactId,
-    action: 'DOCUMENT_SUBMITTED',
-    userId: currentUserId,
-    userName: user.name,
-    userRole: user.role,
-    documentTitle: newArtifact.title,
-    details: `${user.name} (${user.role}) uploaded and submitted "${newArtifact.title}" (v1.0) for technical review.`
-  });
-
-  syncEntityToMongo('artifacts', newArtifact);
-
-  return res.json(newArtifact);
 });
 
-// Update Document Content or Upload New File Version
+// 6. PUT /api/artifacts/:id - Update Document Content or Revision
 router.put('/:id', async (req, res) => {
-  const artifact = store.artifacts.find(a => a.id === req.params.id);
-  if (!artifact) return res.status(404).json({ error: 'Artifact not found' });
+  try {
+    const { data: artifact, error: fetchErr } = await supabaseAdmin.from('artifacts').select('*').eq('id', req.params.id).single();
+    if (fetchErr || !artifact) return res.status(404).json({ error: 'Artifact not found' });
 
-  const { content, fileName, fileSize, fileType, fileData, changeSummary, responseNote, isMajorVersion, submitForReview, userId } = req.body;
-  const currentUserId = userId || req.user?.id || artifact.ownerId || 'usr-ba-01';
-  const user = store.users.find(u => u.id === currentUserId || u.email === currentUserId) || { name: 'Author', role: 'Author' };
+    const { content, fileName, fileSize, changeSummary, responseNote, isMajorVersion, submitForReview } = req.body;
+    const currentUserId = req.user?.id || artifact.owner_id;
 
-  const prevVersion = artifact.currentVersion || '1.0';
-  const [major, minor] = prevVersion.split('.').map(Number);
-  const newVersionStr = isMajorVersion ? `${(major || 1) + 1}.0` : `${major || 1}.${(minor || 0) + 1}`;
-  const newStatus = (submitForReview || fileName) ? 'Submitted' : (artifact.status === 'Changes Requested' ? 'Revision' : artifact.status);
+    const prevVersion = artifact.current_version || '1.0';
+    const [maj, min] = prevVersion.split('.').map(Number);
+    const nextVersion = isMajorVersion ? `${(maj || 1) + 1}.0` : `${maj || 1}.${(min || 0) + 1}`;
 
-  if (content) artifact.content = content;
-  if (fileName) {
-    artifact.fileName = fileName;
-    artifact.fileSize = fileSize || '2.4 MB';
-    artifact.fileType = fileType || 'pdf';
-    artifact.fileData = fileData || artifact.fileData;
-  }
-  artifact.currentVersion = newVersionStr;
-  artifact.status = newStatus;
+    const newStatus = (submitForReview || fileName)
+      ? 'Submitted'
+      : (artifact.status === 'Changes Requested' ? 'Draft' : artifact.status);
 
-  const revNote = responseNote || changeSummary || 'Uploaded updated deliverable revision.';
-  artifact.lastRevisionNote = revNote;
+    const updateFields = {
+      current_version: nextVersion,
+      status: newStatus,
+      updated_at: new Date().toISOString()
+    };
 
-  // If this was a re-upload after Changes Requested, reset reviewers to Pending
-  if (artifact.status === 'Submitted') {
-    artifact.rejectionReason = '';
-    store.reviewers.filter(r => r.artifactId === artifact.id).forEach(r => {
-      r.status = 'Pending';
+    if (content !== undefined) updateFields.content = content;
+    if (fileName) {
+      updateFields.file_name = fileName;
+      updateFields.file_size = fileSize || '1.5 MB';
+    }
+
+    if (newStatus === 'Submitted') {
+      updateFields.rejection_reason = null;
+      // Reset reviewers to pending
+      await supabaseAdmin.from('artifact_reviewers').update({ status: 'Pending', comments: '' }).eq('artifact_id', artifact.id);
+      await supabaseAdmin.from('artifact_approvers').update({ status: 'Pending', comments: '' }).eq('artifact_id', artifact.id);
+    }
+
+    const { data: updatedArtifact, error: updateErr } = await supabaseAdmin
+      .from('artifacts')
+      .update(updateFields)
+      .eq('id', artifact.id)
+      .select()
+      .single();
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    const revNote = responseNote || changeSummary || `Updated deliverable to v${nextVersion}`;
+
+    // Add version snapshot
+    await supabaseAdmin.from('artifact_versions').insert({
+      id: uuidv4(),
+      artifact_id: artifact.id,
+      version_number: nextVersion,
+      file_name: updateFields.file_name || artifact.file_name,
+      file_size: updateFields.file_size || artifact.file_size,
+      content: content !== undefined ? content : artifact.content,
+      change_summary: revNote,
+      author_id: currentUserId,
+      status: newStatus,
+      created_at: new Date().toISOString()
     });
-    store.approvers.filter(a => a.artifactId === artifact.id).forEach(a => {
-      a.status = 'Pending';
+
+    await recordAuditLog({
+      projectId: artifact.project_id,
+      entityType: 'Artifact',
+      entityId: artifact.id,
+      action: submitForReview ? 'DOCUMENT_RESUBMITTED' : 'DOCUMENT_UPDATED',
+      userId: currentUserId,
+      userName: req.user?.name || 'Author',
+      userRole: req.user?.role || 'Author',
+      documentTitle: artifact.title,
+      details: `Saved revision v${nextVersion} for "${artifact.title}". Note: "${revNote}"`
     });
+
+    return res.json(updatedArtifact);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  store.versions.unshift({
-    id: `ver-${Date.now()}`,
-    artifactId: artifact.id,
-    versionNumber: newVersionStr,
-    fileName: artifact.fileName,
-    fileSize: artifact.fileSize,
-    content: artifact.content,
-    changeSummary: revNote,
-    authorId: currentUserId,
-    status: newStatus,
-    createdAt: new Date().toISOString()
-  });
-
-  const { recordAuditLog } = require('../utils/auditLogger');
-  await recordAuditLog({
-    projectId: artifact.projectId,
-    entityType: 'Artifact',
-    entityId: artifact.id,
-    action: 'DOCUMENT_RESUBMITTED',
-    userId: currentUserId,
-    userName: user.name,
-    userRole: user.role,
-    documentTitle: artifact.title,
-    responseNote: revNote,
-    details: `${user.name} (${user.role}) re-uploaded revision (v${newVersionStr}) for "${artifact.title}". Note to reviewer: "${revNote}"`
-  });
-
-  syncEntityToMongo('artifacts', artifact);
-
-  return res.json(artifact);
 });
 
 module.exports = router;
-

@@ -1,189 +1,281 @@
 const express = require('express');
-const store = require('../dataStore');
+const { supabaseAdmin } = require('../config/supabaseClient');
+const { recordAuditLog, createNotification } = require('../utils/auditLogger');
 
 const router = express.Router();
 
-router.get('/pending', (req, res) => {
-  const userId = req.query.userId || req.user?.id || 'usr-ta-01';
-  const user = store.users.find(u => u.id === userId || u.email === userId);
-  const userRole = user?.role || '';
+// 1. GET /api/approvals/pending - Pending reviews and approvals
+router.get('/pending', async (req, res) => {
+  try {
+    const userId = req.query.userId || req.user?.id || 'usr-ta-01';
 
-  const pendingReviews = store.reviewers
-    .filter(r => (r.userId === userId || (userRole && r.roleName === userRole)) && r.status === 'Pending')
-    .map(r => {
-      const art = store.artifacts.find(a => a.id === r.artifactId);
-      return {
-        ...r,
-        artifact: art ? {
-          ...art,
-          project: store.projects.find(p => p.id === art.projectId),
-          phase: store.phases.find(ph => ph.id === art.phaseId),
-          owner: store.users.find(u => u.id === art.ownerId)
-        } : null
-      };
-    });
+    // Fetch user details for role matching
+    const { data: user } = await supabaseAdmin.from('users').select('*').eq('id', userId).single();
+    const userRole = user?.role || '';
 
-  const pendingApprovals = store.approvers
-    .filter(a => (a.userId === userId || (userRole && a.roleName === userRole)) && a.status === 'Pending')
-    .map(app => {
-      const art = store.artifacts.find(a => a.id === app.artifactId);
-      const allRevs = art ? store.reviewers.filter(r => r.artifactId === art.id) : [];
-      const approvedRevs = allRevs.filter(r => r.status === 'Reviewed' || r.status === 'Approved');
-      const allReviewsCompleted = allRevs.length === 0 || approvedRevs.length === allRevs.length;
+    // Fetch all pending reviews and approvals
+    const { data: allReviewers } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('status', 'Pending');
+    const { data: allApprovers } = await supabaseAdmin.from('artifact_approvers').select('*').eq('status', 'Pending');
+    const { data: artifacts } = await supabaseAdmin.from('artifacts').select('*');
+    const { data: projects } = await supabaseAdmin.from('projects').select('*');
+    const { data: phases } = await supabaseAdmin.from('phases').select('*');
+    const { data: users } = await supabaseAdmin.from('users').select('id, name, role, email, avatar');
 
-      return {
-        ...app,
-        allReviewsCompleted,
-        reviewsCount: allRevs.length,
-        approvedReviewsCount: approvedRevs.length,
-        artifact: art ? {
-          ...art,
-          project: store.projects.find(p => p.id === art.projectId),
-          phase: store.phases.find(ph => ph.id === art.phaseId),
-          owner: store.users.find(u => u.id === art.ownerId),
-          reviewers: allRevs.map(r => ({ ...r, user: store.users.find(u => u.id === r.userId) })),
-          approvers: store.approvers.filter(ap => ap.artifactId === art.id).map(ap => ({ ...ap, user: store.users.find(u => u.id === ap.userId) }))
-        } : null
-      };
-    });
+    // Filter reviews assigned to this user or role
+    const pendingReviews = (allReviewers || [])
+      .filter(r => r.user_id === userId || (userRole && r.role_name === userRole))
+      .map(r => {
+        const art = (artifacts || []).find(a => a.id === r.artifact_id);
+        const proj = art ? (projects || []).find(p => p.id === art.project_id) : null;
+        const ph = art ? (phases || []).find(phase => phase.id === art.phase_id) : null;
+        const owner = art ? (users || []).find(u => u.id === art.owner_id) : null;
 
-  return res.json({ pendingReviews, pendingApprovals });
+        return {
+          id: r.id,
+          artifactId: r.artifact_id,
+          userId: r.user_id,
+          roleName: r.role_name,
+          status: r.status,
+          artifact: art ? {
+            id: art.id,
+            title: art.title,
+            artifactType: art.artifact_type,
+            currentVersion: art.current_version,
+            status: art.status,
+            project: proj,
+            phase: ph,
+            owner: owner
+          } : null
+        };
+      });
+
+    // Filter approvals
+    const pendingApprovals = (allApprovers || [])
+      .filter(a => a.user_id === userId || (userRole && a.role_name === userRole))
+      .map(app => {
+        const art = (artifacts || []).find(a => a.id === app.artifact_id);
+        const proj = art ? (projects || []).find(p => p.id === art.project_id) : null;
+        const ph = art ? (phases || []).find(phase => phase.id === art.phase_id) : null;
+        const owner = art ? (users || []).find(u => u.id === art.owner_id) : null;
+
+        // Check if all technical reviews are signed off
+        const reviewsForArt = (allReviewers || []).filter(r => r.artifact_id === app.artifact_id);
+        const allReviewsCompleted = reviewsForArt.length === 0 || reviewsForArt.every(r => r.status === 'Reviewed' || r.status === 'Approved');
+
+        return {
+          id: app.id,
+          artifactId: app.artifact_id,
+          userId: app.user_id,
+          roleName: app.role_name,
+          sequence: app.sequence,
+          status: app.status,
+          allReviewsCompleted,
+          artifact: art ? {
+            id: art.id,
+            title: art.title,
+            artifactType: art.artifact_type,
+            currentVersion: art.current_version,
+            status: art.status,
+            project: proj,
+            phase: ph,
+            owner: owner
+          } : null
+        };
+      });
+
+    return res.json({ pendingReviews, pendingApprovals });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-const { recordAuditLog } = require('../utils/auditLogger');
-const { syncEntityToMongo } = require('../config/db');
-
+// 2. POST /api/approvals/review - Sign off or request changes on technical review
 router.post('/review', async (req, res) => {
-  const { reviewerId, action, comments, userId } = req.body;
-  const reviewer = store.reviewers.find(r => r.id === reviewerId);
-  if (!reviewer) return res.status(404).json({ error: 'Reviewer record not found' });
+  try {
+    const { reviewerId, action, comments, userId } = req.body;
+    const activeUserId = userId || req.user?.id || 'usr-ta-01';
 
-  const activeUserId = userId || req.user?.id || reviewer.userId || 'usr-ta-01';
-  const user = store.users.find(u => u.id === activeUserId || u.email === activeUserId) || { name: reviewer.roleName || 'Technical Reviewer', role: reviewer.roleName || 'Reviewer' };
+    const { data: reviewer, error } = await supabaseAdmin
+      .from('artifact_reviewers')
+      .select('*')
+      .eq('id', reviewerId)
+      .single();
 
-  reviewer.status = action === 'Approved' ? 'Reviewed' : action;
-  reviewer.comments = comments || '';
+    if (error || !reviewer) return res.status(404).json({ error: 'Reviewer record not found' });
 
-  const artifact = store.artifacts.find(a => a.id === reviewer.artifactId);
-  if (artifact) {
-    if (action === 'Changes Requested') {
-      artifact.status = 'Changes Requested';
-      artifact.rejectionReason = comments || 'Changes requested during technical review';
-      artifact.rejectedBy = `${user.name} (${user.role})`;
-      artifact.rejectedAt = new Date().toISOString();
+    const newStatus = action === 'Approved' ? 'Reviewed' : action;
 
-      await recordAuditLog({
-        projectId: artifact.projectId,
-        entityType: 'Artifact',
-        entityId: artifact.id,
-        action: 'CHANGES_REQUESTED',
-        userId: user.id,
-        userName: user.name,
-        userRole: user.role,
-        documentTitle: artifact.title,
-        rejectionReason: comments,
-        details: `${user.name} (${user.role}) requested changes on "${artifact.title}". Reason: "${comments || 'Please revise and resubmit.'}"`
-      });
-    } else {
-      const allRevs = store.reviewers.filter(r => r.artifactId === artifact.id);
-      if (allRevs.every(r => r.status === 'Reviewed' || r.status === 'Approved')) {
-        artifact.status = 'Under Review';
+    await supabaseAdmin
+      .from('artifact_reviewers')
+      .update({
+        status: newStatus,
+        comments: comments || '',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', reviewerId);
+
+    const { data: artifact } = await supabaseAdmin.from('artifacts').select('*').eq('id', reviewer.artifact_id).single();
+
+    if (artifact) {
+      if (action === 'Changes Requested') {
+        await supabaseAdmin
+          .from('artifacts')
+          .update({
+            status: 'Changes Requested',
+            rejection_reason: comments || 'Changes requested during technical review signoff.',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', artifact.id);
+
+        await recordAuditLog({
+          projectId: artifact.project_id,
+          entityType: 'Artifact',
+          entityId: artifact.id,
+          action: 'CHANGES_REQUESTED',
+          userId: activeUserId,
+          userName: req.user?.name || 'Technical Reviewer',
+          userRole: req.user?.role || reviewer.role_name,
+          documentTitle: artifact.title,
+          rejectionReason: comments,
+          details: `Requested changes on "${artifact.title}". Reason: "${comments || 'Please revise and resubmit.'}"`
+        });
+      } else {
+        // Check if all reviews are now complete
+        const { data: revs } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('artifact_id', artifact.id);
+        const allDone = (revs || []).every(r => r.id === reviewerId ? true : (r.status === 'Reviewed' || r.status === 'Approved'));
+
+        if (allDone) {
+          await supabaseAdmin.from('artifacts').update({ status: 'Under Review' }).eq('id', artifact.id);
+        }
+
+        await recordAuditLog({
+          projectId: artifact.project_id,
+          entityType: 'Artifact',
+          entityId: artifact.id,
+          action: 'REVIEW_APPROVED',
+          userId: activeUserId,
+          userName: req.user?.name || 'Technical Reviewer',
+          userRole: req.user?.role || reviewer.role_name,
+          documentTitle: artifact.title,
+          details: `Signed off technical review for "${artifact.title}". ${comments ? `Note: "${comments}"` : ''}`
+        });
       }
-
-      await recordAuditLog({
-        projectId: artifact.projectId,
-        entityType: 'Artifact',
-        entityId: artifact.id,
-        action: 'REVIEW_APPROVED',
-        userId: user.id,
-        userName: user.name,
-        userRole: user.role,
-        documentTitle: artifact.title,
-        details: `${user.name} (${user.role}) signed off technical review for "${artifact.title}".${comments ? ` Note: "${comments}"` : ''}`
-      });
     }
 
-    syncEntityToMongo('artifacts', artifact);
+    return res.json({ message: 'Review recorded successfully', status: newStatus });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  return res.json(reviewer);
 });
 
+// 3. POST /api/approvals/approve - Executive / Client Signoff
 router.post('/approve', async (req, res) => {
-  const { approverId, action, comments, userId } = req.body;
-  const approver = store.approvers.find(a => a.id === approverId);
-  if (!approver) return res.status(404).json({ error: 'Approver record not found' });
+  try {
+    const { approverId, action, comments, userId } = req.body;
+    const activeUserId = userId || req.user?.id || 'usr-pm-01';
 
-  const activeUserId = userId || req.user?.id || approver.userId || 'usr-pm-01';
-  const user = store.users.find(u => u.id === activeUserId || u.email === activeUserId) || { name: approver.roleName || 'Approver', role: approver.roleName || 'Approver' };
+    const { data: approver, error } = await supabaseAdmin
+      .from('artifact_approvers')
+      .select('*')
+      .eq('id', approverId)
+      .single();
 
-  const artifact = store.artifacts.find(a => a.id === approver.artifactId);
+    if (error || !approver) return res.status(404).json({ error: 'Approver record not found' });
 
-  // Enforce sequential review-first rule
-  if (action === 'Approved' && artifact) {
-    const allRevs = store.reviewers.filter(r => r.artifactId === artifact.id);
-    const unreviewed = allRevs.filter(r => r.status !== 'Reviewed' && r.status !== 'Approved');
-    if (unreviewed.length > 0) {
-      return res.status(400).json({
-        error: `Cannot grant final signoff yet. ${unreviewed.length} mandatory technical review(s) must be completed and signed off first.`
-      });
-    }
-  }
+    const { data: artifact } = await supabaseAdmin.from('artifacts').select('*').eq('id', approver.artifact_id).single();
 
-  approver.status = action;
-  approver.comments = comments || '';
-
-  if (artifact) {
-    if (action === 'Rejected') {
-      artifact.status = 'Changes Requested';
-      artifact.rejectionReason = comments || 'Signoff rejected by executive approver';
-      artifact.rejectedBy = `${user.name} (${user.role})`;
-      artifact.rejectedAt = new Date().toISOString();
-
-      await recordAuditLog({
-        projectId: artifact.projectId,
-        entityType: 'Artifact',
-        entityId: artifact.id,
-        action: 'EXECUTIVE_REJECTED',
-        userId: user.id,
-        userName: user.name,
-        userRole: user.role,
-        documentTitle: artifact.title,
-        rejectionReason: comments,
-        details: `${user.name} (${user.role}) rejected signoff for "${artifact.title}". Reason: "${comments || 'Changes required.'}"`
-      });
-    } else if (action === 'Approved') {
-      const allApps = store.approvers.filter(a => a.artifactId === artifact.id);
-      if (allApps.every(a => a.status === 'Approved')) {
-        artifact.status = 'Approved';
-        artifact.rejectionReason = '';
-
-        // Recalculate Phase Progress
-        const phaseArtifacts = store.artifacts.filter(a => a.phaseId === artifact.phaseId);
-        const approvedCount = phaseArtifacts.filter(a => a.status === 'Approved' || a.status === 'Published').length;
-        const phase = store.phases.find(ph => ph.id === artifact.phaseId);
-        if (phase) {
-          phase.progress = Math.round((approvedCount / (phaseArtifacts.length || 1)) * 100);
-        }
+    // Enforce sequential review-first rule
+    if (action === 'Approved' && artifact) {
+      const { data: revs } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('artifact_id', artifact.id);
+      const unreviewed = (revs || []).filter(r => r.status !== 'Reviewed' && r.status !== 'Approved');
+      if (unreviewed.length > 0) {
+        return res.status(400).json({
+          error: `Cannot grant final signoff yet. ${unreviewed.length} mandatory technical review(s) must be completed and signed off first.`
+        });
       }
-
-      await recordAuditLog({
-        projectId: artifact.projectId,
-        entityType: 'Artifact',
-        entityId: artifact.id,
-        action: 'EXECUTIVE_APPROVED',
-        userId: user.id,
-        userName: user.name,
-        userRole: user.role,
-        documentTitle: artifact.title,
-        details: `${user.name} (${user.role}) granted formal executive approval for "${artifact.title}". Status updated to Approved.`
-      });
     }
 
-    syncEntityToMongo('artifacts', artifact);
-  }
+    await supabaseAdmin
+      .from('artifact_approvers')
+      .update({
+        status: action,
+        comments: comments || '',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', approverId);
 
-  return res.json(approver);
+    if (artifact) {
+      if (action === 'Rejected') {
+        await supabaseAdmin
+          .from('artifacts')
+          .update({
+            status: 'Changes Requested',
+            rejection_reason: comments || 'Executive signoff rejected.',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', artifact.id);
+
+        await recordAuditLog({
+          projectId: artifact.project_id,
+          entityType: 'Artifact',
+          entityId: artifact.id,
+          action: 'EXECUTIVE_REJECTED',
+          userId: activeUserId,
+          userName: req.user?.name || 'Approver',
+          userRole: req.user?.role || approver.role_name,
+          documentTitle: artifact.title,
+          rejectionReason: comments,
+          details: `Rejected signoff for "${artifact.title}". Reason: "${comments || 'Executive revision required.'}"`
+        });
+      } else if (action === 'Approved') {
+        const { data: apps } = await supabaseAdmin.from('artifact_approvers').select('*').eq('artifact_id', artifact.id);
+        const allApproved = (apps || []).every(a => a.id === approverId ? true : a.status === 'Approved');
+
+        if (allApproved) {
+          // AUTO-PROMOTE TO PUBLISHED so phase gates pass seamlessly
+          await supabaseAdmin
+            .from('artifacts')
+            .update({
+              status: 'Published',
+              rejection_reason: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', artifact.id);
+
+          // Recalculate phase progress
+          const { data: phaseArtifacts } = await supabaseAdmin.from('artifacts').select('*').eq('phase_id', artifact.phase_id);
+          const publishedCount = (phaseArtifacts || []).filter(a => a.id === artifact.id || a.status === 'Published' || a.status === 'Approved').length;
+          const progressPct = Math.round((publishedCount / (phaseArtifacts.length || 1)) * 100);
+
+          await supabaseAdmin
+            .from('phases')
+            .update({
+              progress: progressPct,
+              status: progressPct === 100 ? 'Completed' : 'InProgress',
+              is_blocked: progressPct === 100 ? false : undefined,
+              block_reason: progressPct === 100 ? null : undefined
+            })
+            .eq('id', artifact.phase_id);
+        }
+
+        await recordAuditLog({
+          projectId: artifact.project_id,
+          entityType: 'Artifact',
+          entityId: artifact.id,
+          action: 'EXECUTIVE_APPROVED',
+          userId: activeUserId,
+          userName: req.user?.name || 'Executive Approver',
+          userRole: req.user?.role || approver.role_name,
+          documentTitle: artifact.title,
+          details: `Granted formal executive approval for "${artifact.title}". Status promoted to Published.`
+        });
+      }
+    }
+
+    return res.json({ message: 'Approval recorded successfully', status: action });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

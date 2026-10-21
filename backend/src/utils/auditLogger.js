@@ -1,54 +1,39 @@
-const store = require('../dataStore');
-const { syncEntityToMongo } = require('../config/db');
+const { supabaseAdmin } = require('../config/supabaseClient');
 
-/**
- * Records an immutable audit log entry in memory and MongoDB
- */
-const recordAuditLog = async ({
-  projectId,
-  entityType = 'Artifact',
-  entityId,
-  action,
-  userId,
-  userName,
-  userRole,
-  details,
-  documentTitle,
-  rejectionReason,
-  responseNote
-}) => {
+async function recordAuditLog({ projectId, entityType, entityId, action, userId, userName, userRole, documentTitle, details, rejectionReason, responseNote, previousState, newState }) {
   try {
-    const user = store.users.find(u => u.id === userId || u.email === userId);
-    const logId = `aud-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const now = new Date();
-
     const logEntry = {
-      id: logId,
-      projectId: projectId || 'global',
-      entityType,
-      entityId: entityId || 'N/A',
+      project_id: projectId || null,
+      user_id: userId,
       action,
-      details: details || '',
-      userId: user?.id || userId || 'system',
-      userName: userName || user?.name || 'System User',
-      userRole: userRole || user?.role || 'Member',
-      documentTitle: documentTitle || '',
-      rejectionReason: rejectionReason || '',
-      responseNote: responseNote || '',
-      createdAt: now.toISOString()
+      entity_type: entityType,
+      entity_id: entityId,
+      previous_state: previousState || null,
+      new_state: newState || null,
+      details: details || `${userName || 'User'} (${userRole || 'Unknown'}) performed ${action} on ${entityType} "${documentTitle || entityId}"`,
+      reason: rejectionReason || responseNote || null
     };
 
-    // Prepend to in-memory store for instant UI updates
-    if (!store.auditLogs) store.auditLogs = [];
-    store.auditLogs.unshift(logEntry);
-
-    // Persist to MongoDB
-    await syncEntityToMongo('auditLogs', logEntry);
-
-    return logEntry;
+    const { error } = await supabaseAdmin.from('audit_logs').insert(logEntry);
+    if (error) console.error('Audit log write error:', error.message);
   } catch (err) {
     console.error('Failed to record audit log:', err.message);
   }
-};
+}
 
-module.exports = { recordAuditLog };
+async function createNotification({ userId, title, message, type, linkUrl }) {
+  try {
+    const { error } = await supabaseAdmin.from('notifications').insert({
+      user_id: userId,
+      title,
+      message,
+      type,
+      link_url: linkUrl || null
+    });
+    if (error) console.error('Notification write error:', error.message);
+  } catch (err) {
+    console.error('Failed to create notification:', err.message);
+  }
+}
+
+module.exports = { recordAuditLog, createNotification };

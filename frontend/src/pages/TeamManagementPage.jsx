@@ -25,6 +25,7 @@ export default function TeamManagementPage() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    password: '',
     role: 'Business Analyst',
     title: ''
   });
@@ -53,8 +54,9 @@ export default function TeamManagementPage() {
         method: 'POST',
         body: JSON.stringify(formData)
       });
-      setMessage(`Successfully created employee account for ${created.name} (${created.role})! Initial default password set to: 123`);
-      setFormData({ name: '', email: '', role: 'Business Analyst', title: '' });
+      const pwd = created.initialPassword || (formData.password ? formData.password : 'Admin@123');
+      setMessage(`Successfully created ${created.role} account for ${created.name} (${created.email})! Initial Password: ${pwd}`);
+      setFormData({ name: '', email: '', password: '', role: 'Business Analyst', title: '' });
       setSubmitting(false);
       loadUsers();
     } catch (err) {
@@ -145,10 +147,10 @@ export default function TeamManagementPage() {
             <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
               <Shield className="w-4 h-4 text-blue-600" />
             </div>
-            Employees
+            Team & Employee Credentials
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Default initial password: <strong className="text-amber-600 font-mono">123</strong>
+            Provision roles for SDLC governance phases &bull; Default password: <strong className="text-indigo-600 font-mono">Admin@123</strong>
           </p>
         </div>
         <div className="px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-700 font-semibold">
@@ -163,13 +165,13 @@ export default function TeamManagementPage() {
         <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-4">
           <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
             <UserPlus className="w-4 h-4 text-blue-500" />
-            Add New Employee Account
+            Provision Team Credential
           </h2>
 
           {message && (
-            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span>{message}</span>
+            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <span className="font-medium">{message}</span>
             </div>
           )}
 
@@ -181,14 +183,14 @@ export default function TeamManagementPage() {
 
           <form onSubmit={handleCreateUser} className="space-y-3">
             <div>
-              <label className={labelCls}>Employee Full Name *</label>
+              <label className={labelCls}>Full Name *</label>
               <input type="text" required placeholder="e.g. Jessica Taylor" value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })} className={inputCls} />
             </div>
 
             <div>
               <label className={labelCls}>Corporate Email Address *</label>
-              <input type="email" required placeholder="jessica.ba@bankgov.com" value={formData.email}
+              <input type="email" required placeholder="jessica.pm@bankgov.com" value={formData.email}
                 onChange={e => setFormData({ ...formData, email: e.target.value })} className={inputCls} />
             </div>
 
@@ -201,14 +203,20 @@ export default function TeamManagementPage() {
               </select>
             </div>
 
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center justify-between">
-              <span>Auto Initial Password:</span>
-              <strong className="font-mono text-xs bg-amber-100 px-2 py-0.5 rounded border border-amber-300">123</strong>
+            <div>
+              <label className={labelCls}>Initial Password (Optional)</label>
+              <input type="text" placeholder="Leave empty for default: Admin@123" value={formData.password}
+                onChange={e => setFormData({ ...formData, password: e.target.value })} className={inputCls} />
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-[11px] text-indigo-900 flex items-center justify-between">
+              <span>Default if omitted:</span>
+              <strong className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-700">Admin@123</strong>
             </div>
 
             <button type="submit" disabled={submitting}
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all cursor-pointer mt-2">
-              {submitting ? 'Creating Employee...' : 'Add Employee Account'}
+              {submitting ? 'Creating Credential...' : 'Provision Credential'}
             </button>
           </form>
         </div>

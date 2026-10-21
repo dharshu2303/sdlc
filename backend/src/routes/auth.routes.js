@@ -1,288 +1,421 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const store = require('../dataStore');
-const User = require('../models/User');
-const { syncEntityToMongo } = require('../config/db');
+const { v4: uuidv4 } = require('uuid');
+const { supabaseAdmin } = require('../config/supabaseClient');
+const { recordAuditLog } = require('../utils/auditLogger');
+const { JWT_SECRET } = require('../middleware/auth');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'sdlc_doc_governance_secret_key_2026_super_secure';
 
-// Login API - Validates Email & Password directly from MongoDB
+// Helper to normalize user across Supabase Cloud and Local schema
+const normalizeUser = (u) => {
+  if (!u) return u;
+  let role = u.role;
+  if (!role) {
+    if (u.system_role === 'SUPER_ADMIN' || u.systemRole === 'SUPER_ADMIN') {
+      role = 'Admin';
+    } else if (u.system_role === 'ADMIN' || u.systemRole === 'ADMIN') {
+      role = 'Project Manager';
+    } else {
+      role = u.title || 'Developer';
+    }
+  }
+  return {
+    ...u,
+    role: role || 'Developer',
+    systemRole: u.system_role || u.systemRole || (role === 'Admin' ? 'SUPER_ADMIN' : role === 'Project Manager' ? 'ADMIN' : 'MEMBER')
+  };
+};
+
+// 1. POST /api/auth/login - Secure bcrypt authenticated login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Please enter both email and password' });
-  }
-
-  let user = null;
   try {
-    user = await User.findOne({ email: new RegExp(`^${email.trim()}$`, 'i') }).lean();
-  } catch (e) {
-    console.error('Mongo login lookup error:', e.message);
-  }
+    const { email, password } = req.body;
 
-  if (!user) {
-    user = store.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  }
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Please enter both email and password.' });
+    }
 
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid email address or password' });
-  }
+    const cleanEmail = email.trim().toLowerCase();
 
-  // Validate Password (matches user password or fallback default '123' or 'admin123' / 'admin')
-  if (user.password !== password && password !== '123' && password !== 'admin123' && password !== 'admin') {
-    return res.status(401).json({ error: 'Incorrect password. Admin: admin, Employee initial default: 123' });
-  }
+    // Query user from Supabase
+    const { data: users, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .ilike('email', cleanEmail);
 
-  const token = jwt.sign(
-    { id: user.id, email: user.email, name: user.name, role: user.role, systemRole: user.systemRole },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
+    if (error || !users || users.length === 0) {
+      return res.status(401).json({ error: 'Invalid email address or password.' });
+    }
 
-  return res.json({ token, user });
-});
+    const rawUser = users[0];
 
-// Get Current User Profile
-router.get('/me', async (req, res) => {
-  const userId = req.user?.id || 'usr-admin-01';
-  let user = null;
-  try {
-    user = await User.findOne({ id: userId }).lean();
-  } catch (e) {}
+    // Verify password with bcrypt (supports bcrypt hash or secure initial seed hash)
+    let isMatch = false;
+    if (rawUser.password && (rawUser.password.startsWith('$2a$') || rawUser.password.startsWith('$2b$'))) {
+      isMatch = await bcrypt.compare(password, rawUser.password);
+    } else {
+      isMatch = rawUser.password === password;
+      // If plaintext, upgrade to bcrypt on the fly
+      if (isMatch) {
+        const hashed = await bcrypt.hash(password, 10);
+        await supabaseAdmin.from('users').update({ password: hashed }).eq('id', rawUser.id);
+      }
+    }
 
-  if (!user) {
-    user = store.users.find(u => u.id === userId) || store.users[0] || {
-      id: 'usr-admin-01',
-      name: 'System Administrator',
-      email: 'admin@gmail.com',
-      role: 'Admin',
-      systemRole: 'ADMIN'
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email address or password.' });
+    }
+
+    const user = normalizeUser(rawUser);
+
+    const tokenPayload = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      systemRole: user.systemRole
     };
-  }
 
-  const userProjects = store.projectMembers.filter(pm => pm.userId === user.id);
-  return res.json({ ...user, projectMembers: userProjects });
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
+
+    // Do not return password in response
+    const { password: _, ...userSafe } = user;
+    return res.json({ token, user: userSafe });
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ error: 'Internal authentication error' });
+  }
 });
 
-// Get List of All Employee Accounts directly from MongoDB
+// 2. GET /api/auth/me - Current user profile
+router.get('/me', async (req, res) => {
+  try {
+    const userId = req.user?.id || 'usr-admin-01';
+
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('id, email, name, title, system_role, avatar, created_at')
+      .eq('id', userId)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const { data: memberships } = await supabaseAdmin
+      .from('project_members')
+      .select('*')
+      .eq('user_id', user.id);
+
+    return res.json({ ...normalizeUser(user), projectMembers: memberships || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. GET /api/auth/demo-users - Available users for quick role switching in development / demo
+router.get('/demo-users', async (req, res) => {
+  try {
+    const { data: users, error } = await supabaseAdmin
+      .from('users')
+      .select('id, name, email, title, system_role, avatar');
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json((users || []).map(normalizeUser));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. GET /api/auth/users/all - Admin Employee List
 router.get('/users/all', async (req, res) => {
   try {
-    const users = await User.find({}).lean();
-    return res.json(users);
+    const { data: users, error } = await supabaseAdmin
+      .from('users')
+      .select('id, name, email, title, system_role, avatar, is_default_password, created_at')
+      .order('name', { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json((users || []).map(normalizeUser));
   } catch (err) {
-    console.error('Error fetching users from MongoDB:', err.message);
-    return res.json(store.users);
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// Calculate Employee Deletion Impact (Assigned Projects & Authored Specs)
+// 5. GET /api/auth/users/:id/impact - Deletion Impact Assessment
 router.get('/users/:id/impact', async (req, res) => {
-  let user = null;
   try {
-    user = await User.findOne({ id: req.params.id }).lean();
-  } catch (e) {}
-  if (!user) user = store.users.find(u => u.id === req.params.id);
+    const targetId = req.params.id;
 
-  if (!user) return res.status(404).json({ error: 'Employee account not found' });
+    const { data: user } = await supabaseAdmin.from('users').select('*').eq('id', targetId).single();
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-  // Find assigned projects
-  const memberEntries = store.projectMembers.filter(pm => pm.userId === user.id);
-  const assignedProjects = memberEntries.map(pm => {
-    const proj = store.projects.find(p => p.id === pm.projectId);
-    return {
-      projectId: pm.projectId,
-      projectName: proj ? proj.name : 'Banking Management System',
-      projectCode: proj ? proj.code : 'BMS-2026',
-      assignedRole: pm.roleName || user.role
-    };
-  });
+    const { data: members } = await supabaseAdmin.from('project_members').select('*').eq('user_id', targetId);
+    const { data: artifacts } = await supabaseAdmin.from('artifacts').select('*').eq('owner_id', targetId);
+    const { data: reviewers } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('user_id', targetId).eq('status', 'Pending');
+    const { data: approvers } = await supabaseAdmin.from('artifact_approvers').select('*').eq('user_id', targetId).eq('status', 'Pending');
+    const { data: projects } = await supabaseAdmin.from('projects').select('id, name, code');
 
-  // Find authored artifacts
-  const authoredArtifacts = store.artifacts.filter(a => a.ownerId === user.id).map(a => ({
-    id: a.id,
-    title: a.title,
-    artifactType: a.artifactType,
-    currentVersion: a.currentVersion,
-    status: a.status
-  }));
-
-  // Find pending reviews & approvals
-  const pendingReviews = store.reviewers.filter(r => r.userId === user.id && r.status === 'Pending').map(r => {
-    const art = store.artifacts.find(a => a.id === r.artifactId);
-    return { id: r.id, artifactTitle: art ? art.title : 'Document Spec', roleName: r.roleName };
-  });
-
-  const pendingApprovals = store.approvers.filter(a => a.userId === user.id && a.status === 'Pending').map(a => {
-    const art = store.artifacts.find(art => art.id === a.artifactId);
-    return { id: a.id, artifactTitle: art ? art.title : 'Document Spec', roleName: a.roleName };
-  });
-
-  return res.json({
-    user,
-    assignedProjects,
-    authoredArtifacts,
-    pendingReviews,
-    pendingApprovals,
-    totalImpactCount: assignedProjects.length + authoredArtifacts.length + pendingReviews.length + pendingApprovals.length
-  });
-});
-
-// Self-Service Change Password (for logged-in employees)
-router.post('/change-password', async (req, res) => {
-  const { userId, currentPassword, newPassword } = req.body;
-  const targetId = userId || req.user?.id || 'usr-admin-01';
-
-  let user = await User.findOne({ id: targetId });
-  if (!user) {
-    const memUser = store.users.find(u => u.id === targetId);
-    if (!memUser) return res.status(404).json({ error: 'User account not found' });
-    user = memUser;
-  }
-
-  if (user.password !== currentPassword && currentPassword !== '123' && currentPassword !== 'admin123' && currentPassword !== 'admin') {
-    return res.status(400).json({ error: 'Current password is incorrect.' });
-  }
-
-  if (!newPassword || newPassword.length < 3) {
-    return res.status(400).json({ error: 'New password must be at least 3 characters long' });
-  }
-
-  const updated = await User.findOneAndUpdate(
-    { id: targetId },
-    { $set: { password: newPassword, isDefaultPassword: false } },
-    { returnDocument: 'after' }
-  );
-
-  // Add Audit Log
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    userId: targetId,
-    action: 'PASSWORD_CHANGED',
-    entityType: 'User',
-    entityId: targetId,
-    newState: `User ${user.name} (${user.role}) updated their password.`,
-    createdAt: new Date()
-  });
-
-  return res.json({ message: 'Password updated successfully', user: updated || user });
-});
-
-// Admin Employee Creation & Provisioning API (Admin creates with default password '123')
-router.post('/users/create', async (req, res) => {
-  const { name, email, role, title } = req.body;
-
-  if (!name || !email || !role) {
-    return res.status(400).json({ error: 'Fields (name, email, role) are required' });
-  }
-
-  const existing = await User.findOne({ email: new RegExp(`^${email.trim()}$`, 'i') });
-  if (existing) {
-    return res.status(400).json({ error: `Employee with email ${email} already exists` });
-  }
-
-  const newEmployee = {
-    id: `usr-${Date.now()}`,
-    name,
-    email: email.toLowerCase().trim(),
-    password: '123', // Mandatory default password 123
-    isDefaultPassword: true,
-    role,
-    title: title || role,
-    systemRole: 'MEMBER',
-    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`
-  };
-
-  const created = await User.create(newEmployee);
-
-  // Add to Project Members for active project if available
-  if (store.projects.length > 0) {
-    store.projectMembers.push({
-      id: `pm-${Date.now()}`,
-      projectId: req.body.projectId || store.projects[0].id,
-      userId: newEmployee.id,
-      roleName: role
+    const assignedProjects = (members || []).map(m => {
+      const p = (projects || []).find(proj => proj.id === m.project_id);
+      return {
+        projectId: m.project_id,
+        projectName: p ? p.name : 'Banking Management System',
+        projectCode: p ? p.code : 'BMS-2026',
+        assignedRole: m.role_name
+      };
     });
+
+    const authoredArtifacts = (artifacts || []).map(a => ({
+      id: a.id,
+      title: a.title,
+      artifactType: a.artifact_type,
+      currentVersion: a.current_version,
+      status: a.status
+    }));
+
+    return res.json({
+      user,
+      assignedProjects,
+      authoredArtifacts,
+      pendingReviews: reviewers || [],
+      pendingApprovals: approvers || [],
+      totalImpactCount: assignedProjects.length + authoredArtifacts.length + (reviewers || []).length + (approvers || []).length
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  // Record Audit
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    userId: req.user?.id || 'usr-admin-01',
-    action: 'EMPLOYEE_PROVISIONED',
-    entityType: 'User',
-    entityId: newEmployee.id,
-    newState: `Admin created employee ${name} (${role}) with email ${email} and default password 123.`,
-    createdAt: new Date()
-  });
-
-  return res.json(created);
 });
 
-// Admin Edit Employee Details
+// 6. POST /api/auth/users/create & POST /api/auth/users - Provision Employee / Manager Credentials
+const handleCreateEmployee = async (req, res) => {
+  try {
+    const { name, email, role, title, projectId, password } = req.body;
+
+    if (!name || !email || !role) {
+      return res.status(400).json({ error: 'Name, email, and role are required.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Check if user already exists
+    const { data: existing } = await supabaseAdmin.from('users').select('id').ilike('email', cleanEmail);
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ error: `An account with email ${cleanEmail} already exists.` });
+    }
+
+    // Use custom password if provided, otherwise default to 'Admin@123'
+    const finalPassword = password && password.trim().length >= 4 ? password.trim() : 'Admin@123';
+    const hashedPassword = await bcrypt.hash(finalPassword, 10);
+    const newUserId = uuidv4();
+
+    const isSuperAdmin = role.toLowerCase() === 'admin';
+    const isManagerRole = role.toLowerCase().includes('project manager') || isSuperAdmin;
+
+    const userDbPayload = {
+      id: newUserId,
+      name: name.trim(),
+      email: cleanEmail,
+      password: hashedPassword,
+      title: title?.trim() || role.trim(),
+      system_role: isSuperAdmin ? 'SUPER_ADMIN' : isManagerRole ? 'ADMIN' : 'MEMBER',
+      is_default_password: !password,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`,
+      created_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabaseAdmin.from('users').insert(userDbPayload).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Assign to active project if provided
+    if (projectId) {
+      await supabaseAdmin.from('project_members').insert({
+        id: uuidv4(),
+        project_id: projectId,
+        user_id: newUserId,
+        role_name: role.trim(),
+        created_at: new Date().toISOString()
+      });
+    }
+
+    await recordAuditLog({
+      entityType: 'User',
+      entityId: newUserId,
+      action: 'EMPLOYEE_PROVISIONED',
+      userId: req.user?.id || 'usr-admin-01',
+      userName: req.user?.name || 'Administrator',
+      userRole: req.user?.role || 'Admin',
+      details: `Provisioned ${role} account for ${name} (${cleanEmail}).`
+    });
+
+    const safeUser = normalizeUser(data || userDbPayload);
+    delete safeUser.password;
+    safeUser.role = role.trim();
+
+    return res.status(201).json({
+      ...safeUser,
+      initialPassword: finalPassword,
+      message: `Account created successfully with password: ${finalPassword}`
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+router.post('/users/create', handleCreateEmployee);
+router.post('/users', handleCreateEmployee);
+
+// 7. PUT /api/auth/users/:id - Admin Edit Employee Details
 router.put('/users/:id', async (req, res) => {
-  const { name, email, role, title } = req.body;
-  const updateData = {};
-  if (name) updateData.name = name;
-  if (email) updateData.email = email.toLowerCase().trim();
-  if (role) updateData.role = role;
-  if (title) updateData.title = title;
+  try {
+    const { name, email, role, title } = req.body;
+    const updateData = {};
 
-  const updatedUser = await User.findOneAndUpdate(
-    { id: req.params.id },
-    { $set: updateData },
-    { returnDocument: 'after' }
-  );
+    if (name) updateData.name = name.trim();
+    if (email) updateData.email = email.trim().toLowerCase();
+    if (role) {
+      updateData.title = role.trim();
+      const isSuper = role.toLowerCase() === 'admin';
+      const isMgr = role.toLowerCase().includes('project manager') || isSuper;
+      updateData.system_role = isSuper ? 'SUPER_ADMIN' : isMgr ? 'ADMIN' : 'MEMBER';
+    }
+    if (title) updateData.title = title.trim();
 
-  if (!updatedUser) return res.status(404).json({ error: 'Employee account not found' });
-  return res.json(updatedUser);
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .update(updateData)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: error?.message || 'Employee account not found' });
+
+    const safeUser = normalizeUser(data);
+    delete safeUser.password;
+    if (role) safeUser.role = role.trim();
+    return res.json(safeUser);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-// Admin Remove/Delete Employee directly from MongoDB
+// 8. DELETE /api/auth/users/:id - Admin Remove Employee
 router.delete('/users/:id', async (req, res) => {
-  const removed = await User.findOneAndDelete({ id: req.params.id });
-  if (!removed) return res.status(404).json({ error: 'Employee not found' });
+  try {
+    const targetId = req.params.id;
 
-  // Clean up project memberships
-  store.projectMembers = store.projectMembers.filter(pm => pm.userId !== req.params.id);
+    const { data: user } = await supabaseAdmin.from('users').select('*').eq('id', targetId).single();
+    if (!user) return res.status(404).json({ error: 'Employee not found' });
 
-  // Audit
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    userId: req.user?.id || 'usr-admin-01',
-    action: 'EMPLOYEE_DELETED',
-    entityType: 'User',
-    entityId: removed.id,
-    newState: `Admin deleted employee account ${removed.name} (${removed.role}).`,
-    createdAt: new Date()
-  });
+    await supabaseAdmin.from('project_members').delete().eq('user_id', targetId);
+    await supabaseAdmin.from('users').delete().eq('id', targetId);
 
-  return res.json({ message: `Removed employee account ${removed.name}` });
+    await recordAuditLog({
+      entityType: 'User',
+      entityId: targetId,
+      action: 'EMPLOYEE_DELETED',
+      userId: req.user?.id || 'usr-admin-01',
+      userName: req.user?.name || 'Administrator',
+      userRole: 'Admin',
+      details: `Admin deleted employee account ${user.name} (${user.role}).`
+    });
+
+    return res.json({ message: `Successfully removed employee account ${user.name}` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-// Admin Reset Password to Default 123
+// 9. PUT /api/auth/users/:id/reset-password - Admin Password Reset
 router.put('/users/:id/reset-password', async (req, res) => {
-  const user = await User.findOneAndUpdate(
-    { id: req.params.id },
-    { $set: { password: '123', isDefaultPassword: true } },
-    { returnDocument: 'after' }
-  );
+  try {
+    const defaultPassword = 'Admin@123';
+    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-  if (!user) return res.status(404).json({ error: 'Employee account not found' });
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .update({
+        password: hashedPassword,
+        is_default_password: true
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
 
-  // Add Audit Log
-  store.auditLogs.unshift({
-    id: `aud-${Date.now()}`,
-    userId: req.user?.id || 'usr-admin-01',
-    action: 'PASSWORD_RESET',
-    entityType: 'User',
-    entityId: user.id,
-    newState: `Admin reset password for ${user.name} (${user.role}) to default 123.`,
-    createdAt: new Date()
-  });
+    if (error || !user) return res.status(404).json({ error: 'Employee account not found' });
 
-  return res.json({ message: `Reset password for ${user.name} to default '123'`, user });
+    await recordAuditLog({
+      entityType: 'User',
+      entityId: user.id,
+      action: 'PASSWORD_RESET',
+      userId: req.user?.id || 'usr-admin-01',
+      userName: req.user?.name || 'Administrator',
+      userRole: 'Admin',
+      details: `Admin reset password for ${user.name} to default initial password.`
+    });
+
+    return res.json({ message: `Reset password for ${user.name} to default initial password.` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 10. POST /api/auth/change-password - Self-Service Password Change
+router.post('/change-password', async (req, res) => {
+  try {
+    const { userId, currentPassword, newPassword } = req.body;
+    const targetId = userId || req.user?.id;
+
+    if (!targetId) return res.status(401).json({ error: 'Authentication required' });
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+    }
+
+    const { data: user } = await supabaseAdmin.from('users').select('*').eq('id', targetId).single();
+    if (!user) return res.status(404).json({ error: 'User account not found' });
+
+    // Verify current password
+    let isCurrentValid = false;
+    if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+      isCurrentValid = await bcrypt.compare(currentPassword, user.password);
+    } else {
+      isCurrentValid = user.password === currentPassword;
+    }
+
+    if (!isCurrentValid) {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    const newHashed = await bcrypt.hash(newPassword, 10);
+    const { data: updated, error } = await supabaseAdmin
+      .from('users')
+      .update({
+        password: newHashed,
+        is_default_password: false
+      })
+      .eq('id', targetId)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await recordAuditLog({
+      entityType: 'User',
+      entityId: targetId,
+      action: 'PASSWORD_CHANGED',
+      userId: targetId,
+      userName: user.name,
+      userRole: user.role,
+      details: `User ${user.name} (${user.role}) updated their password securely.`
+    });
+
+    const { password: _, ...safeUser } = updated || user;
+    return res.json({ message: 'Password updated successfully.', user: safeUser });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
