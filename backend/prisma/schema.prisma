@@ -1,0 +1,333 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    User[]
+  projects Project[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  name         String
+  title        String?
+  avatar       String?
+  systemRole   String   @default("MEMBER") // ADMIN, MEMBER
+  orgId        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization   Organization?   @relation(fields: [orgId], references: [id])
+  projectMembers ProjectMember[]
+  ownedArtifacts Artifact[]      @relation("ArtifactOwner")
+  versions       ArtifactVersion[]
+  reviews        ArtifactReviewer[]
+  approvals      ArtifactApprover[]
+  meetings       MeetingParticipant[]
+  decisions      Decision[]
+  actionItems    ActionItem[]
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  code        String   @unique
+  description String?
+  clientName  String?
+  startDate   String?
+  endDate     String?
+  type        String?  // Web, Mobile, Enterprise, Microservices
+  priority    String   @default("Medium") // High, Medium, Low
+  orgId       String
+  methodologyId String
+  currentPhaseId String?
+  status      String   @default("Active") // Active, Completed, Paused
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization   @relation(fields: [orgId], references: [id])
+  methodology  Methodology    @relation(fields: [methodologyId], references: [id])
+  members      ProjectMember[]
+  phases       Phase[]
+  artifacts    Artifact[]
+  meetings     Meeting[]
+  decisions    Decision[]
+  actionItems  ActionItem[]
+  auditLogs    AuditLog[]
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  roleName  String   // PM, BA, TA, TL, Dev, UIUX, QA, DBA, Client, Auditor
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId, roleName])
+}
+
+model Methodology {
+  id          String   @id @default(uuid())
+  name        String   // Waterfall, Scrum, V-Model, Custom
+  code        String   @unique
+  description String
+  isSystem    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  phases           MethodologyPhase[]
+  requiredArtifacts MethodologyArtifact[]
+  projects         Project[]
+}
+
+model MethodologyPhase {
+  id            String   @id @default(uuid())
+  methodologyId String
+  name          String   // e.g. Requirements, Design, Development, Testing
+  sequence      Int
+  description   String?
+
+  methodology Methodology @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
+  phases      Phase[]
+}
+
+model MethodologyArtifact {
+  id            String  @id @default(uuid())
+  methodologyId String
+  phaseName     String
+  artifactType  String  // SRS, UseCase, RTM, HLD, LLD, TestPlan, BugReport, etc.
+  name          String
+  ownerRole     String
+  reviewerRoles String  // JSON array string e.g. ["TA", "TL"]
+  approverRoles String  // JSON array string e.g. ["PM", "Client"]
+  consumerRoles String  // JSON array string e.g. ["Developer", "QA"]
+  isRequired    Boolean @default(true)
+  blocksPhase   Boolean @default(true)
+  template      String? // Markdown initial template
+
+  methodology Methodology @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
+}
+
+model Phase {
+  id         String   @id @default(uuid())
+  projectId  String
+  name       String
+  sequence   Int
+  status     String   @default("Pending") // Pending, InProgress, Locked, Completed
+  progress   Int      @default(0) // 0 - 100
+  isBlocked  Boolean  @default(false)
+  blockReason String?
+  startDate  String?
+  targetDate String?
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  artifacts Artifact[]
+  phaseGates PhaseGate[]
+  methodologyPhaseId String?
+  methodologyPhase   MethodologyPhase? @relation(fields: [methodologyPhaseId], references: [id])
+}
+
+model Artifact {
+  id              String   @id @default(uuid())
+  projectId       String
+  phaseId         String
+  artifactType    String
+  title           String
+  description     String?
+  ownerId         String
+  status          String   @default("Not Started") // Not Started, Draft, Submitted, Under Review, Changes Requested, Approved, Published, Archived
+  currentVersion  String   @default("1.0")
+  origin          String?  // Stakeholder Meeting, Online Creation, Requirement Workshop, etc.
+  confidentiality String   @default("Internal") // Public, Internal, Restricted
+  dueDate         String?
+  blocksNextPhase Boolean  @default(true)
+  content         String?  // Markdown content
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project     Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase       Phase              @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  owner       User               @relation("ArtifactOwner", fields: [ownerId], references: [id])
+  versions    ArtifactVersion[]
+  reviewers   ArtifactReviewer[]
+  approvers   ArtifactApprover[]
+  meetings    Meeting[]          @relation("MeetingArtifacts")
+  sourceLinks TraceabilityLink[] @relation("SourceArtifact")
+  targetLinks TraceabilityLink[] @relation("TargetArtifact")
+}
+
+model ArtifactVersion {
+  id            String   @id @default(uuid())
+  artifactId    String
+  versionNumber String   // e.g. 1.0, 1.1, 2.0
+  content       String
+  changeSummary String?
+  authorId      String
+  status        String   // Draft, Under Review, Approved, Published
+  createdAt     DateTime @default(now())
+
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  author   User     @relation(fields: [authorId], references: [id])
+}
+
+model ArtifactReviewer {
+  id         String   @id @default(uuid())
+  artifactId String
+  userId     String
+  roleName   String   // e.g. Technical Architect
+  status     String   @default("Pending") // Pending, Reviewed, Changes Requested
+  comments   String?
+  updatedAt  DateTime @updatedAt
+
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+}
+
+model ArtifactApprover {
+  id         String   @id @default(uuid())
+  artifactId String
+  userId     String
+  roleName   String   // e.g. Project Manager, Client Representative
+  sequence   Int      @default(1)
+  status     String   @default("Pending") // Pending, Approved, Rejected
+  comments   String?
+  updatedAt  DateTime @updatedAt
+
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+}
+
+model Meeting {
+  id          String   @id @default(uuid())
+  projectId   String
+  title       String
+  meetingType String   // Stakeholder Meeting, Requirement Workshop, Design Review, Sprint Planning, Retrospective
+  date        String
+  time        String?
+  location    String?
+  organizer   String
+  agenda      String?
+  minutes     String?
+  status      String   @default("Completed") // Scheduled, Completed, Cancelled
+  createdAt   DateTime @default(now())
+
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  participants MeetingParticipant[]
+  artifacts    Artifact[]           @relation("MeetingArtifacts")
+  decisions    Decision[]
+  actionItems  ActionItem[]
+}
+
+model MeetingParticipant {
+  id        String @id @default(uuid())
+  meetingId String
+  userId    String
+  role      String
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+}
+
+model Decision {
+  id            String   @id @default(uuid())
+  projectId     String
+  meetingId     String?
+  decisionCode  String   // DEC-001, DEC-002
+  title         String
+  description   String
+  decisionMakerId String
+  reason        String?
+  impact        String?
+  status        String   @default("Approved") // Draft, Approved, Superseded
+  createdAt     DateTime @default(now())
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  meeting       Meeting? @relation(fields: [meetingId], references: [id])
+  decisionMaker User     @relation(fields: [decisionMakerId], references: [id])
+}
+
+model ActionItem {
+  id          String   @id @default(uuid())
+  projectId   String
+  meetingId   String?
+  title       String
+  assigneeId  String
+  dueDate     String?
+  status      String   @default("In Progress") // Pending, In Progress, Completed
+  createdAt   DateTime @default(now())
+
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  meeting  Meeting? @relation(fields: [meetingId], references: [id])
+  assignee User     @relation(fields: [assigneeId], references: [id])
+}
+
+model TraceabilityLink {
+  id               String   @id @default(uuid())
+  sourceArtifactId String
+  targetArtifactId String
+  relationshipType String   // OriginatesFrom, DependsOn, DerivedInto, TestedBy, Satisfies
+  description      String?
+  createdAt        DateTime @default(now())
+
+  sourceArtifact Artifact @relation("SourceArtifact", fields: [sourceArtifactId], references: [id], onDelete: Cascade)
+  targetArtifact Artifact @relation("TargetArtifact", fields: [targetArtifactId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceArtifactId, targetArtifactId, relationshipType])
+}
+
+model PhaseGate {
+  id           String   @id @default(uuid())
+  phaseId      String
+  gateRule     String   // Rule description
+  isSatisfied  Boolean  @default(false)
+  blockReason  String?
+  checkedAt    DateTime @default(now())
+
+  phase Phase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  projectId    String?
+  userId       String
+  action       String   // CREATE_ARTIFACT, SUBMIT_REVIEW, APPROVE_DOCUMENT, etc.
+  entityType   String   // Artifact, Meeting, Decision, Project
+  entityId     String
+  previousState String?
+  newState     String?
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // Document, Review, Approval, Meeting, Phase, Blocker
+  isRead    Boolean  @default(false)
+  linkUrl   String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
