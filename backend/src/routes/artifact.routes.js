@@ -5,6 +5,13 @@ const { recordAuditLog } = require('../utils/auditLogger');
 
 const router = express.Router();
 
+const groupBy = (rows, key) => (rows || []).reduce((groups, row) => {
+  const groupKey = row[key];
+  if (!groups.has(groupKey)) groups.set(groupKey, []);
+  groups.get(groupKey).push(row);
+  return groups;
+}, new Map());
+
 // 1. GET /api/artifacts/download/:id - Direct File Download
 router.get('/download/:id', async (req, res) => {
   try {
@@ -41,7 +48,9 @@ router.get('/download/version/:versionId', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { projectId, phaseId, status, ownerId, search } = req.query;
-    let query = supabaseAdmin.from('artifacts').select('*');
+    // The repository only needs document metadata. Avoid loading full document bodies
+    // and snapshot contents for every row in the catalog.
+    let query = supabaseAdmin.from('artifacts').select('id, project_id, phase_id, artifact_type, title, description, current_version, status, confidentiality, due_date, blocks_next_phase, file_name, file_size, file_type, owner_id, created_at, updated_at, rejection_reason');
 
     if (projectId) query = query.eq('project_id', projectId);
     if (phaseId) query = query.eq('phase_id', phaseId);
@@ -51,26 +60,41 @@ router.get('/', async (req, res) => {
     const { data: artifacts, error } = await query.order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
 
-    const { data: projects } = await supabaseAdmin.from('projects').select('id, name, code');
-    const { data: phases } = await supabaseAdmin.from('phases').select('id, name, sequence');
-    const { data: users } = await supabaseAdmin.from('users').select('id, name, role, avatar');
-    const { data: allReviewers } = await supabaseAdmin.from('artifact_reviewers').select('*');
-    const { data: allApprovers } = await supabaseAdmin.from('artifact_approvers').select('*');
-    const { data: allVersions } = await supabaseAdmin.from('artifact_versions').select('*');
+    const [projectResult, phaseResult, userResult, reviewerResult, approverResult, versionResult] = await Promise.all([
+      supabaseAdmin.from('projects').select('id, name, code'),
+      supabaseAdmin.from('phases').select('id, name, sequence'),
+      supabaseAdmin.from('users').select('id, name, role, avatar'),
+      supabaseAdmin.from('artifact_reviewers').select('id, artifact_id, user_id, role_name, status'),
+      supabaseAdmin.from('artifact_approvers').select('id, artifact_id, user_id, role_name, sequence, status'),
+      supabaseAdmin.from('artifact_versions').select('id, artifact_id, version_number, file_name, change_summary, status, created_at')
+    ]);
+    const { data: projects } = projectResult;
+    const { data: phases } = phaseResult;
+    const { data: users } = userResult;
+    const { data: allReviewers } = reviewerResult;
+    const { data: allApprovers } = approverResult;
+    const { data: allVersions } = versionResult;
+
+    const projectsById = new Map((projects || []).map(project => [project.id, project]));
+    const phasesById = new Map((phases || []).map(phase => [phase.id, phase]));
+    const usersById = new Map((users || []).map(user => [user.id, user]));
+    const reviewersByArtifact = groupBy(allReviewers, 'artifact_id');
+    const approversByArtifact = groupBy(allApprovers, 'artifact_id');
+    const versionsByArtifact = groupBy(allVersions, 'artifact_id');
 
     let list = (artifacts || []).map(a => {
-      const proj = (projects || []).find(p => p.id === a.project_id);
-      const ph = (phases || []).find(phase => phase.id === a.phase_id);
-      const owner = (users || []).find(u => u.id === a.owner_id);
-      const revs = (allReviewers || []).filter(r => r.artifact_id === a.id).map(r => ({
+      const proj = projectsById.get(a.project_id);
+      const ph = phasesById.get(a.phase_id);
+      const owner = usersById.get(a.owner_id);
+      const revs = (reviewersByArtifact.get(a.id) || []).map(r => ({
         ...r,
-        user: (users || []).find(u => u.id === r.user_id)
+        user: usersById.get(r.user_id)
       }));
-      const apps = (allApprovers || []).filter(app => app.artifact_id === a.id).map(app => ({
+      const apps = (approversByArtifact.get(a.id) || []).map(app => ({
         ...app,
-        user: (users || []).find(u => u.id === app.user_id)
+        user: usersById.get(app.user_id)
       }));
-      const vers = (allVersions || []).filter(v => v.artifact_id === a.id);
+      const vers = versionsByArtifact.get(a.id) || [];
 
       return {
         id: a.id,
@@ -93,7 +117,7 @@ router.get('/', async (req, res) => {
         owner: owner || { name: 'Author', role: 'Member' },
         reviewers: revs,
         approvers: apps,
-        versions: vers,
+        versions: vers.map(v => ({ id: v.id, versionNumber: v.version_number, fileName: v.file_name, changeSummary: v.change_summary, status: v.status, createdAt: v.created_at })),
         rejectionReason: a.rejection_reason,
         createdAt: a.created_at,
         updatedAt: a.updated_at
@@ -197,6 +221,14 @@ router.post('/upload', async (req, res) => {
 
     const currentUserId = ownerId || req.user?.id || 'usr-ba-01';
     const artifactId = `art-${Date.now()}`;
+
+    if (!projectId) return res.status(400).json({ error: 'Select a project before uploading a document.' });
+    const { data: targetProject, error: projectError } = await supabaseAdmin
+      .from('projects').select('id, status').eq('id', projectId).single();
+    if (projectError || !targetProject) return res.status(404).json({ error: 'Project not found.' });
+    if (targetProject.status === 'Completed' || targetProject.status === 'Archived') {
+      return res.status(409).json({ error: 'This project is complete and no longer accepts document uploads.' });
+    }
 
     const artifactRecord = {
       id: artifactId,

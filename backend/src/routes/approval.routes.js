@@ -256,6 +256,19 @@ router.post('/approve', async (req, res) => {
               block_reason: progressPct === 100 ? null : undefined
             })
             .eq('id', artifact.phase_id);
+
+          const { data: projectPhases } = await supabaseAdmin
+            .from('phases')
+            .select('status')
+            .eq('project_id', artifact.project_id);
+          if ((projectPhases || []).length > 0 && projectPhases.every(phase => phase.status === 'Completed')) {
+            await supabaseAdmin.from('projects').update({
+              status: 'Completed',
+              end_date: new Date().toISOString().slice(0, 10),
+              current_phase_id: null,
+              updated_at: new Date().toISOString()
+            }).eq('id', artifact.project_id);
+          }
         }
 
         await recordAuditLog({

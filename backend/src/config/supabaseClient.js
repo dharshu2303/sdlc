@@ -479,6 +479,12 @@ const SEED_PASSWORD_HASH = bcrypt.hashSync('Admin@123', 10);
       return this;
     }
 
+    in(field, values) {
+      const normalizedValues = (values || []).map(value => String(value));
+      this.filters.push(row => normalizedValues.includes(String(row[field])));
+      return this;
+    }
+
     ilike(field, pattern) {
       const cleanPattern = String(pattern).replace(/%/g, '').toLowerCase();
       this.filters.push(row => String(row[field] || '').toLowerCase().includes(cleanPattern));

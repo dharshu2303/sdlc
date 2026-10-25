@@ -10,18 +10,23 @@ router.get('/evaluate/:phaseId', async (req, res) => {
     const { data: phase, error } = await supabaseAdmin.from('phases').select('*').eq('id', phaseId).single();
     if (error || !phase) return res.status(404).json({ error: 'Phase not found' });
 
-    const { data: phaseArtifacts } = await supabaseAdmin.from('artifacts').select('*').eq('phase_id', phaseId);
+    const { data: phaseArtifacts } = await supabaseAdmin.from('artifacts').select('id, status').eq('phase_id', phaseId);
     const artifacts = phaseArtifacts || [];
     const totalArtifacts = artifacts.length;
 
     // Both Approved and Published satisfy phase gate criteria
     const passedArtifacts = artifacts.filter(a => a.status === 'Published' || a.status === 'Approved');
 
-    const { data: allApprovers } = await supabaseAdmin.from('artifact_approvers').select('*').eq('status', 'Pending');
-    const { data: allReviewers } = await supabaseAdmin.from('artifact_reviewers').select('*').eq('status', 'Pending');
+    const artifactIds = artifacts.map(artifact => artifact.id);
+    const [approverResult, reviewerResult] = artifactIds.length ? await Promise.all([
+      supabaseAdmin.from('artifact_approvers').select('id, artifact_id').eq('status', 'Pending').in('artifact_id', artifactIds),
+      supabaseAdmin.from('artifact_reviewers').select('id, artifact_id').eq('status', 'Pending').in('artifact_id', artifactIds)
+    ]) : [{ data: [] }, { data: [] }];
+    const { data: allApprovers } = approverResult;
+    const { data: allReviewers } = reviewerResult;
 
-    const pendingApprovals = (allApprovers || []).filter(app => artifacts.some(a => a.id === app.artifact_id));
-    const pendingReviews = (allReviewers || []).filter(rev => artifacts.some(a => a.id === rev.artifact_id));
+    const pendingApprovals = allApprovers || [];
+    const pendingReviews = allReviewers || [];
 
     const blockers = [];
 
@@ -68,6 +73,14 @@ router.get('/evaluate/:phaseId', async (req, res) => {
 
         await supabaseAdmin.from('projects').update({
           current_phase_id: nextPhase.id,
+          updated_at: new Date().toISOString()
+        }).eq('id', phase.project_id);
+      } else if (!nextPhase) {
+        const completedOn = new Date().toISOString().slice(0, 10);
+        await supabaseAdmin.from('projects').update({
+          status: 'Completed',
+          end_date: completedOn,
+          current_phase_id: null,
           updated_at: new Date().toISOString()
         }).eq('id', phase.project_id);
       }

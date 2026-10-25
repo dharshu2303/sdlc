@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchApi } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
-import { FolderGit2, Plus, ArrowRight, Users } from 'lucide-react';
+import { FolderGit2, Plus, ArrowRight, Users, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function ProjectList({ activeUser }) {
@@ -10,6 +10,7 @@ export default function ProjectList({ activeUser }) {
   const navigate = useNavigate();
 
   const isProjectManager = activeUser?.role === 'Project Manager';
+  const canDeleteProject = isProjectManager || activeUser?.role === 'Admin';
 
   useEffect(() => {
     fetchApi('/projects')
@@ -22,6 +23,17 @@ export default function ProjectList({ activeUser }) {
         setLoading(false);
       });
   }, []);
+
+  const deleteProject = async (event, project) => {
+    event.stopPropagation();
+    if (!window.confirm(`Delete "${project.name}" and its documents? This cannot be undone.`)) return;
+    try {
+      await fetchApi(`/projects/${project.id}`, { method: 'DELETE' });
+      setProjects(current => current.filter(item => item.id !== project.id));
+    } catch (err) {
+      alert(`Could not delete project: ${err.message}`);
+    }
+  };
 
   if (loading) return (
     <div className="p-8 text-center text-blue-400 text-xs animate-pulse">Loading SDLC Projects...</div>
@@ -78,8 +90,8 @@ export default function ProjectList({ activeUser }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {projects.map(proj => {
-            const totalDocs = proj.artifacts?.length || 0;
-            const pubDocs = proj.artifacts?.filter(a => a.status === 'Published').length || 0;
+            const totalDocs = proj.artifactsCount || 0;
+            const pubDocs = proj.publishedCount || 0;
             const pct = totalDocs > 0 ? Math.round((pubDocs / totalDocs) * 100) : 0;
 
             return (
@@ -93,7 +105,20 @@ export default function ProjectList({ activeUser }) {
                     <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold">
                       {proj.methodology?.name || 'Waterfall'}
                     </span>
-                    <StatusBadge status={proj.status} />
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={proj.status} />
+                      {canDeleteProject && (
+                        <button
+                          type="button"
+                          onClick={event => deleteProject(event, proj)}
+                          aria-label={`Delete ${proj.name}`}
+                          title="Delete project"
+                          className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <h2 className="text-base font-bold text-slate-800 mt-3 group-hover:text-blue-700 transition-colors">{proj.name}</h2>
@@ -111,7 +136,7 @@ export default function ProjectList({ activeUser }) {
 
                   <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
                     <span className="flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5" /> {proj.members?.length || 0} Members
+                      <Users className="w-3.5 h-3.5" /> {proj.membersCount || 0} Members
                     </span>
                     <span className="flex items-center gap-1 font-semibold text-blue-600 group-hover:gap-2 transition-all">
                       View Lifecycle <ArrowRight className="w-3.5 h-3.5" />

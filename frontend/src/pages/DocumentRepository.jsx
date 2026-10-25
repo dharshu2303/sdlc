@@ -12,6 +12,7 @@ import {
   X,
   ShieldCheck,
   User,
+  Users,
   Eye,
   Layers,
   FolderGit2,
@@ -48,7 +49,8 @@ export default function DocumentRepository({ activeUser }) {
   });
   const [selectedFile, setSelectedFile] = useState(null);
 
-  const loadData = () => {
+  const loadData = (silent = false) => {
+    if (!silent) setLoading(true);
     Promise.all([
       fetchApi('/artifacts'),
       fetchApi('/projects')
@@ -111,7 +113,7 @@ export default function DocumentRepository({ activeUser }) {
         artifactType: 'SRS',
         description: ''
       }));
-      loadData();
+      loadData(true);
       if (created.id) navigate(`/documents/${created.id}`);
     } catch (err) {
       alert(`Upload error: ${err.message}`);
@@ -173,6 +175,8 @@ export default function DocumentRepository({ activeUser }) {
 
         <div className="flex items-center gap-3">
           <button
+            disabled={!selectedProject || selectedProject.status === 'Completed' || selectedProject.status === 'Archived'}
+            title={selectedProject?.status === 'Completed' || selectedProject?.status === 'Archived' ? 'This project is complete.' : 'Upload a document'}
             onClick={() => {
               if (selectedProject) {
                 setUploadData(prev => ({
@@ -183,7 +187,7 @@ export default function DocumentRepository({ activeUser }) {
               }
               setShowUploadModal(true);
             }}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 flex items-center gap-2 transition-all cursor-pointer"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 flex items-center gap-2 transition-all cursor-pointer"
           >
             <UploadCloud className="w-4 h-4" />
             <span>Upload Document</span>
@@ -328,10 +332,13 @@ export default function DocumentRepository({ activeUser }) {
           >
             <option value="">All Statuses</option>
             <option value="Published">Published</option>
+            <option value="Approved">Approved</option>
             <option value="Under Review">Under Review</option>
+            <option value="In Review">In Review</option>
             <option value="Submitted">Submitted</option>
             <option value="Changes Requested">Changes Requested</option>
             <option value="Draft">Draft</option>
+            <option value="Not Started">Not Started</option>
           </select>
         </div>
       </div>
@@ -354,8 +361,9 @@ export default function DocumentRepository({ activeUser }) {
                 : 'Try clearing filters or upload a new document.'}
             </p>
             <button
+              disabled={!selectedProject || selectedProject.status === 'Completed' || selectedProject.status === 'Archived'}
               onClick={() => setShowUploadModal(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 inline-flex items-center gap-2 transition-all mt-2 cursor-pointer"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 inline-flex items-center gap-2 transition-all mt-2 cursor-pointer"
             >
               <UploadCloud className="w-4 h-4" />
               <span>Upload Document</span>

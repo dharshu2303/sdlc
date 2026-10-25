@@ -14,12 +14,14 @@ router.get('/', async (req, res) => {
       query = query.eq('status', status);
     }
 
-    const { data: projects, error } = await query.order('created_at', { ascending: false });
+    const [{ data: projects, error }, { data: methodologies }, { data: allPhases }, { data: allArtifacts }, { data: allMembers }] = await Promise.all([
+      query.order('created_at', { ascending: false }),
+      supabaseAdmin.from('methodologies').select('id, name, code'),
+      supabaseAdmin.from('phases').select('id, project_id, name, sequence, status, progress'),
+      supabaseAdmin.from('artifacts').select('id, project_id, phase_id, title, artifact_type, status'),
+      supabaseAdmin.from('project_members').select('id, project_id')
+    ]);
     if (error) return res.status(500).json({ error: error.message });
-
-    const { data: methodologies } = await supabaseAdmin.from('methodologies').select('id, name, code');
-    const { data: allPhases } = await supabaseAdmin.from('phases').select('id, project_id, status, progress');
-    const { data: allArtifacts } = await supabaseAdmin.from('artifacts').select('id, project_id, status');
 
     const result = (projects || []).map(p => {
       const meth = (methodologies || []).find(m => m.id === p.methodology_id);
@@ -43,9 +45,12 @@ router.get('/', async (req, res) => {
         currentPhaseId: p.current_phase_id,
         methodology: meth ? { id: meth.id, name: meth.name } : { name: 'Waterfall (7-Phase SDLC)' },
         progress,
+        phases: phases.sort((a, b) => a.sequence - b.sequence),
         phasesCount: phases.length,
         artifactsCount: artifacts.length,
         publishedCount: artifacts.filter(a => a.status === 'Published').length,
+        artifacts,
+        membersCount: (allMembers || []).filter(m => m.project_id === p.id).length,
         createdAt: p.created_at
       };
     });
@@ -69,24 +74,20 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const { data: phases } = await supabaseAdmin
-      .from('phases')
-      .select('*')
-      .eq('project_id', project.id)
-      .order('sequence', { ascending: true });
-
-    const { data: artifacts } = await supabaseAdmin
-      .from('artifacts')
-      .select('*')
-      .eq('project_id', project.id);
-
-    const { data: members } = await supabaseAdmin
-      .from('project_members')
-      .select('*')
-      .eq('project_id', project.id);
-
-    const { data: users } = await supabaseAdmin.from('users').select('id, name, email, role, avatar');
-    const { data: meth } = await supabaseAdmin.from('methodologies').select('*').eq('id', project.methodology_id).single();
+    // Parallel DB queries for maximum performance
+    const [
+      { data: phases },
+      { data: artifacts },
+      { data: members },
+      { data: users },
+      { data: meth }
+    ] = await Promise.all([
+      supabaseAdmin.from('phases').select('*').eq('project_id', project.id).order('sequence', { ascending: true }),
+      supabaseAdmin.from('artifacts').select('*').eq('project_id', project.id),
+      supabaseAdmin.from('project_members').select('*').eq('project_id', project.id),
+      supabaseAdmin.from('users').select('id, name, email, role, avatar'),
+      supabaseAdmin.from('methodologies').select('*').eq('id', project.methodology_id).single()
+    ]);
 
     const enrichedArtifacts = (artifacts || []).map(a => {
       const owner = (users || []).find(u => u.id === a.owner_id);
@@ -298,13 +299,33 @@ router.put('/:id', async (req, res) => {
 // 5. DELETE /api/projects/:id - Delete project
 router.delete('/:id', async (req, res) => {
   try {
+    if (!['Project Manager', 'Admin'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Only a Project Manager or Admin can delete projects.' });
+    }
     const { data: project } = await supabaseAdmin.from('projects').select('*').eq('id', req.params.id).single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
+    const { data: artifacts } = await supabaseAdmin.from('artifacts').select('id').eq('project_id', req.params.id);
+    const artifactIds = (artifacts || []).map(artifact => artifact.id);
+    const { data: disputes } = await supabaseAdmin.from('disputes').select('id').eq('project_id', req.params.id);
+    for (const dispute of disputes || []) {
+      await supabaseAdmin.from('dispute_comments').delete().eq('dispute_id', dispute.id);
+      await supabaseAdmin.from('dispute_votes').delete().eq('dispute_id', dispute.id);
+    }
+    await supabaseAdmin.from('disputes').delete().eq('project_id', req.params.id);
+    if (artifactIds.length) {
+      await supabaseAdmin.from('artifact_versions').delete().in('artifact_id', artifactIds);
+      await supabaseAdmin.from('artifact_reviewers').delete().in('artifact_id', artifactIds);
+      await supabaseAdmin.from('artifact_approvers').delete().in('artifact_id', artifactIds);
+      await supabaseAdmin.from('traceability_links').delete().in('source_artifact_id', artifactIds);
+      await supabaseAdmin.from('traceability_links').delete().in('target_artifact_id', artifactIds);
+    }
+    await supabaseAdmin.from('meetings').delete().eq('project_id', req.params.id);
     await supabaseAdmin.from('artifacts').delete().eq('project_id', req.params.id);
     await supabaseAdmin.from('phases').delete().eq('project_id', req.params.id);
     await supabaseAdmin.from('project_members').delete().eq('project_id', req.params.id);
-    await supabaseAdmin.from('projects').delete().eq('id', req.params.id);
+    const { error } = await supabaseAdmin.from('projects').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
 
     return res.json({ message: `Project ${project.name} successfully deleted.` });
   } catch (err) {

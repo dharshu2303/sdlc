@@ -220,6 +220,24 @@ export default function DocumentEditor({ activeUser }) {
         ) : null}
       </div>
 
+      {/* Document content */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-4">
+          <FileText className="w-4 h-4 text-blue-600" />
+          <h2 className="text-sm font-bold text-slate-800">Document Content</h2>
+        </div>
+        {artifact.content?.trim() ? (
+          <div className="min-h-40 rounded-xl bg-slate-50 border border-slate-200 p-5 text-sm leading-7 text-slate-700 whitespace-pre-wrap break-words">
+            {artifact.content}
+          </div>
+        ) : (
+          <div className="min-h-40 rounded-xl bg-slate-50 border border-dashed border-slate-300 p-6 flex flex-col items-center justify-center text-center gap-2">
+            <FileText className="w-8 h-8 text-slate-300" />
+            <p className="text-sm font-semibold text-slate-700">No text content is available for this document.</p>
+            <p className="text-xs text-slate-500">{artifact.fileName ? `Download ${artifact.fileName} above to view the uploaded file.` : 'The document content will appear here when it is added.'}</p>
+          </div>
+        )}
+      </section>
       {/* Main Content & RACI Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Direct File Upload Zone (Pending) */}
